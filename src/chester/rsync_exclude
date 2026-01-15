@@ -1,0 +1,23 @@
+IsaacLab/_isaac_sim
+IsaacLab/docker/cluster/exports
+containers/
+docker-isaac-sim/
+logs/
+outputs/
+data
+data_dh/
+datasets_dh/
+raw_datasets
+*__pycache__*
+.idea
+*.mp4
+# Only exclude root .git, not submodule .git (use leading / to anchor to root)
+/.git
+wandb
+out*
+*.so
+third_party/pytorch3d/pytorch3d/*.so
+third_party/pytorch3d/*egg-info*
+rsl_rl/rsl_rl.egg-info/
+nohup*
+.venv

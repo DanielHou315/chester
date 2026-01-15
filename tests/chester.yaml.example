@@ -1,0 +1,51 @@
+# tests/chester.yaml - Copy this to tests/chester.yaml and fill in your values
+# This file is gitignored to keep credentials private
+
+log_dir: data
+
+# Package manager: "uv" or "conda"
+package_manager: uv
+sync_on_launch: true
+# For conda (uncomment and configure):
+# package_manager: conda
+# conda_env: myenv
+# conda_command: mamba  # or "conda"
+
+host_address:
+  local: ""
+  gl: "gl"  # SSH config name for Great Lakes
+  armfranka: "armfranka"  # SSH config name
+
+ssh_hosts: [armfranka]  # Hosts using SSH+nohup instead of SLURM
+
+remote_dir:
+  local: /home/YOUR_USER/code/chester
+  gl: /home/YOUR_USER/code/chester
+  armfranka: /home/YOUR_USER/code/chester
+
+remote_log_dir:
+  local: /home/YOUR_USER/code/chester/data
+  gl: /home/YOUR_USER/code/chester/data
+  armfranka: /home/YOUR_USER/code/chester/data
+
+# SLURM header for gl (Great Lakes)
+remote_header:
+  gl: |
+    #!/usr/bin/env bash
+    #SBATCH --nodes=1
+    #SBATCH --partition=spgpu
+    #SBATCH --gpus=$gpus
+    #SBATCH --time=1:00:00
+    #SBATCH --mem=16G
+
+simg_path:
+  gl: null
+
+cuda_module:
+  gl: cuda/12.1.1
+
+modules:
+  gl: [singularity]
+
+remote_mount_option:
+  gl: /usr/share/glvnd

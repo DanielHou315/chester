@@ -1,0 +1,41 @@
+# chester.yaml for testing - placed in parent of chester/
+log_dir: data
+
+host_address:
+  local: ""
+  gl: "gl"
+
+ssh_hosts: []
+
+remote_dir:
+  local: /home/houhd/code
+  gl: /home/houhd/code
+
+remote_log_dir:
+  local: /home/houhd/code/data
+  gl: /home/houhd/code/data
+
+remote_header:
+  gl: |
+    #!/usr/bin/env bash
+    #SBATCH --nodes=1
+    #SBATCH --partition=spgpu
+    #SBATCH --gpus=$gpus
+    #SBATCH --time=72:00:00
+
+simg_path:
+  gl: null
+
+cuda_module:
+  gl: cuda/12.1.1
+
+modules:
+  gl: [singularity]
+
+remote_mount_option:
+  gl: /usr/share/glvnd
+
+autobot_nodelist: []
+gpu_state_dir: ""
+chester_queue_dir: ""
+chester_scheduler_log_dir: ""

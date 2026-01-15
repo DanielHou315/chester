@@ -1,5 +1,6 @@
-rsync_exclude
-rsync_include
 config.py
 *__pycache__*
 .idea
+.venv/
+data/
+tests/chester.yaml

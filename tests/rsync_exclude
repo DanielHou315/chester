@@ -1,0 +1,47 @@
+# rsync_exclude - Files/patterns to exclude from sync
+# Common exclusions for Python/ML projects
+
+# Python
+*__pycache__*
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git (keep .git for version detection, exclude internals)
+/.git/
+
+# Logs and data (will be created on remote)
+data/
+logs/
+outputs/
+*.log
+
+# ML artifacts
+*.pt
+*.pth
+*.ckpt
+wandb/
+mlruns/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+nohup.out

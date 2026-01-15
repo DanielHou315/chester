@@ -1,3 +1,40 @@
+Metadata-Version: 2.4
+Name: chester
+Version: 0.2.0
+Summary: ML experiment launcher for local, SLURM, SSH, and EC2 environments
+License-Expression: MIT
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Science/Research
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: cloudpickle
+Requires-Dist: python-dateutil
+Requires-Dist: pyyaml
+Requires-Dist: joblib
+Provides-Extra: aws
+Requires-Dist: boto3; extra == "aws"
+Requires-Dist: awscli; extra == "aws"
+Provides-Extra: tensorboard
+Requires-Dist: tensorboard; extra == "tensorboard"
+Provides-Extra: wandb
+Requires-Dist: wandb; extra == "wandb"
+Provides-Extra: all
+Requires-Dist: boto3; extra == "all"
+Requires-Dist: awscli; extra == "all"
+Requires-Dist: wandb; extra == "all"
+Requires-Dist: tensorboard; extra == "all"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+
 <img align="right" width="228" height="200" src="/images/chester_logs.png">
 
 # Chester

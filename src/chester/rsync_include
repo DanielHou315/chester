@@ -1,0 +1,8 @@
+IsaacLab/source
+IsaacLab/source/extensions/omni.isaac.lab/omni/isaac/lab/utils/datasets
+# Include .git for submodules (needed for setuptools-scm version detection)
+third_party/curobo/.git
+third_party/pytorch3d/.git
+third_party/rl_games_cotrain/.git
+IsaacLabTactile/.git
+curobo/.git

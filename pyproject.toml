@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chester"
+version = "0.2.0"
+description = "ML experiment launcher for local, SLURM, SSH, and EC2 environments"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy",
+    "cloudpickle",
+    "python-dateutil",
+    "pyyaml",
+    "joblib",
+]
+
+[project.optional-dependencies]
+aws = ["boto3", "awscli"]
+tensorboard = ["tensorboard"]
+wandb = ["wandb"]
+all = ["boto3", "awscli", "wandb", "tensorboard"]
+dev = ["pytest", "pytest-cov"]
+
+[project.scripts]
+chester-pull = "chester.pull_result:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+chester = ["rsync_include", "rsync_exclude"]
+
+[dependency-groups]
+dev = [
+    "torch>=2.5.1",
+    "torchvision>=0.20.1",
+]

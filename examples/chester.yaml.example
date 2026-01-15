@@ -1,0 +1,131 @@
+# chester.yaml - Chester Configuration File
+# Place this file in your project root directory.
+# Chester will search for this file in parent directories when imported.
+#
+# You can also set CHESTER_CONFIG_PATH environment variable to specify the path.
+
+# =============================================================================
+# Project Paths
+# =============================================================================
+
+# Project root path. If not specified, auto-detected from this file's location.
+# project_path: /home/user/my_project
+
+# Local log directory (relative to project_path, or absolute)
+log_dir: data
+
+# =============================================================================
+# Package Manager Configuration
+# =============================================================================
+
+# Package manager to use: "uv" or "conda"
+package_manager: uv
+
+# For conda: environment name (required if package_manager is conda)
+# conda_env: myenv
+
+# For conda: command to use - "conda" or "mamba" (default: conda)
+# conda_command: mamba
+
+# Whether to sync environment on each job launch (default: true)
+# - uv: runs "uv sync" (fast, idempotent - recommended to keep true)
+# - conda: runs "conda env update" (slower - set false if env is stable)
+sync_on_launch: true
+
+# =============================================================================
+# Host Configuration
+# =============================================================================
+
+# SSH hostnames/aliases for each execution mode
+host_address:
+  local: ""              # Local execution (no SSH)
+  gl: "gl"               # Great Lakes SLURM cluster
+  # Add your hosts:
+  # myhost: "myhost.example.com"
+
+# Hosts that use SSH + nohup instead of SLURM
+# These hosts will run jobs via SSH without a job scheduler
+ssh_hosts:
+  # - myhost
+  # - anotherhost
+
+# =============================================================================
+# Remote Directories (MUST be absolute paths for non-local modes)
+# =============================================================================
+
+# Project path on each remote host
+remote_dir:
+  gl: /home/user/my_project
+  # myhost: /home/user/my_project
+
+# Log directory on each remote host (defaults to remote_dir/data if not specified)
+remote_log_dir:
+  gl: /home/user/my_project/data
+  # myhost: /home/user/my_project/data
+
+# =============================================================================
+# SLURM Configuration
+# =============================================================================
+
+# SLURM job script headers for each cluster
+# Use $gpus as placeholder for GPU count (replaced at runtime from variant)
+remote_header:
+  gl: |
+    #!/usr/bin/env bash
+    #SBATCH --nodes=1
+    #SBATCH --partition=spgpu
+    #SBATCH --cpus-per-gpu=4
+    #SBATCH --time=72:00:00
+    #SBATCH --gpus=$gpus
+    #SBATCH --ntasks-per-node=$gpus
+    #SBATCH --mem-per-gpu=80G
+    #SBATCH --gpu_cmode=shared
+
+# =============================================================================
+# Container & Module Configuration
+# =============================================================================
+
+# Singularity container paths (null if not using containers)
+simg_path:
+  gl: null
+  # myhost: /path/to/container.sif
+
+# CUDA module to load on each host
+cuda_module:
+  gl: cuda/12.1.1
+  # myhost: cuda/11.8
+
+# Additional modules to load on each host
+modules:
+  gl:
+    - singularity
+  # myhost:
+  #   - singularity
+  #   - anaconda
+
+# Singularity bind mount options
+remote_mount_option:
+  gl: /usr/share/glvnd
+  # myhost: /opt
+
+# =============================================================================
+# Autobot Custom Scheduler (Optional)
+# Only needed if using the Autobot cluster with custom GPU scheduling
+# =============================================================================
+
+# List of Autobot node IDs available for scheduling
+autobot_nodelist:
+  # - "1-1"
+  # - "1-6"
+
+# Directory containing GPU state pickle files
+gpu_state_dir: ""
+# gpu_state_dir: /project_data/mtcmon/nodestats/
+
+# Directory for job queue files
+chester_queue_dir: ""
+# chester_queue_dir: /home/user/chester_scheduler/
+
+# Directory for scheduler logs
+chester_scheduler_log_dir: ""
+# chester_scheduler_log_dir: /home/user/chester_scheduler/logs/

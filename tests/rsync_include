@@ -1,0 +1,2 @@
+# rsync_include - Files/patterns to explicitly include
+# (Usually empty - rsync includes everything by default unless excluded)
