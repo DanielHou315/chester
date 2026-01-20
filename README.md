@@ -286,6 +286,33 @@ run_experiment_lite(
 )
 ```
 
+### Pulling Extra Directories
+
+In addition to the experiment log directory, you can pull other directories (e.g., generated datasets):
+
+```python
+run_experiment_lite(
+    stub_method_call=run_task,
+    variant=v,
+    mode='myserver',
+    exp_prefix='experiment',
+    auto_pull=True,
+    extra_pull_dirs=['data/generated_datasets'],  # Relative to PROJECT_PATH
+)
+```
+
+**Path resolution:**
+- **Relative paths** (e.g., `data/output`): Resolved against `PROJECT_PATH` locally and `REMOTE_DIR[mode]` on remote
+- **Absolute paths** (starting with `/`): Used as-is on both local and remote
+
+```python
+# Multiple directories, mixed paths
+extra_pull_dirs=[
+    'data/datasets',           # Relative: PROJECT_PATH/data/datasets
+    '/mnt/shared/results',     # Absolute: same path on both machines
+]
+```
+
 ### How It Works
 
 1. **Job Tracking**: Chester saves the process PID to `.chester_pid` when launching
@@ -483,6 +510,7 @@ run_experiment_lite(
     # Auto-pull
     auto_pull=False,           # Enable automatic result pulling
     auto_pull_interval=60,     # Seconds between polls
+    extra_pull_dirs=None,      # List of extra dirs to pull (relative or absolute)
 
     # Hydra
     hydra_enabled=False,       # Use Hydra command format

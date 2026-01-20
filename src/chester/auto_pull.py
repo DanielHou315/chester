@@ -66,6 +66,32 @@ def pull_results(host: str, remote_log_dir: str, local_log_dir: str, bare: bool 
         return False
 
 
+def pull_extra_dirs(host: str, extra_pull_dirs: list, bare: bool = False) -> bool:
+    """
+    Pull additional directories from remote host.
+
+    Args:
+        host: Remote host address
+        extra_pull_dirs: List of dicts with 'remote' and 'local' keys
+        bare: If True, exclude large files (*.pkl, *.pth, etc.)
+
+    Returns:
+        True if all pulls succeeded, False otherwise
+    """
+    if not extra_pull_dirs:
+        return True
+
+    all_success = True
+    for entry in extra_pull_dirs:
+        remote_path = entry['remote']
+        local_path = entry['local']
+        print(f"[auto_pull] Pulling extra dir: {host}:{remote_path} -> {local_path}")
+        if not pull_results(host, remote_path, local_path, bare=bare):
+            print(f"[auto_pull] Warning: Failed to pull extra dir {remote_path}")
+            all_success = False
+    return all_success
+
+
 def get_remote_pid(host: str, remote_log_dir: str) -> Optional[int]:
     """Read the saved PID from .chester_pid file on remote."""
     pid_file = os.path.join(remote_log_dir, '.chester_pid')
@@ -224,6 +250,8 @@ def poll_and_pull(manifest_path: str, poll_interval: int = 60, bare: bool = Fals
             if status == 'done':
                 print(f"[auto_pull] Job completed: {exp_name} on {host}")
                 if pull_results(host, remote_log_dir, local_log_dir, bare=bare):
+                    # Pull extra directories if configured
+                    pull_extra_dirs(host, job.get('extra_pull_dirs', []), bare=bare)
                     job['status'] = 'pulled'
                     job['pulled_at'] = datetime.now().isoformat()
                     print(f"[auto_pull] Successfully pulled: {local_log_dir}")
@@ -238,6 +266,8 @@ def poll_and_pull(manifest_path: str, poll_interval: int = 60, bare: bool = Fals
                 if pid:
                     kill_process_tree(host, pid)
                 if pull_results(host, remote_log_dir, local_log_dir, bare=bare):
+                    # Pull extra directories if configured
+                    pull_extra_dirs(host, job.get('extra_pull_dirs', []), bare=bare)
                     job['status'] = 'pulled'
                     job['pulled_at'] = datetime.now().isoformat()
                     job['had_orphans'] = True

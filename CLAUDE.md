@@ -106,6 +106,12 @@ no .done + process alive → running (keep polling)
 - `kill_process_tree()`: SIGTERM → 5s wait → SIGKILL
 - `check_job_status()`: Determine job state
 - `poll_and_pull()`: Main polling loop
+- `pull_extra_dirs()`: Pull additional directories beyond log_dir
+
+**Extra directories (`extra_pull_dirs` parameter):**
+- `_resolve_extra_pull_dirs()`: Resolve paths to (local, remote) pairs
+- Relative paths: `PROJECT_PATH/path` locally, `REMOTE_DIR[mode]/path` on remote
+- Absolute paths (starting with `/`): Same path on both
 
 ### Command Generation (`slurm.py`)
 

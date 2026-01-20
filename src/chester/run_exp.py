@@ -78,6 +78,39 @@ def _map_local_to_remote_log_dir(local_log_dir: str, mode: str) -> str:
     return remote_log_dir
 
 
+def _resolve_extra_pull_dirs(extra_pull_dirs: list, mode: str) -> list:
+    """
+    Resolve extra_pull_dirs to (local, remote) path pairs.
+
+    Relative paths are resolved against PROJECT_PATH (local) and REMOTE_DIR (remote).
+    Absolute paths (starting with '/') are used as-is on both local and remote.
+
+    Args:
+        extra_pull_dirs: List of directory paths (strings)
+        mode: Execution mode (e.g., 'armfranka', 'gl')
+
+    Returns:
+        List of dicts with 'local' and 'remote' keys
+    """
+    if not extra_pull_dirs:
+        return []
+
+    result = []
+    remote_dir = config.REMOTE_DIR.get(mode, '')
+
+    for path in extra_pull_dirs:
+        if os.path.isabs(path):
+            # Absolute path: same on both local and remote
+            result.append({'local': path, 'remote': path})
+        else:
+            # Relative path: resolve against project roots
+            local_path = os.path.join(config.PROJECT_PATH, path)
+            remote_path = os.path.join(remote_dir, path)
+            result.append({'local': local_path, 'remote': remote_path})
+
+    return result
+
+
 def _init_auto_pull_manifest(exp_prefix: str, mode: str):
     """Initialize the manifest file path for this batch of experiments."""
     global _auto_pull_manifest_path, _auto_pull_jobs
@@ -88,7 +121,8 @@ def _init_auto_pull_manifest(exp_prefix: str, mode: str):
     _auto_pull_jobs = []
 
 
-def _add_job_to_manifest(host: str, remote_log_dir: str, local_log_dir: str, exp_name: str):
+def _add_job_to_manifest(host: str, remote_log_dir: str, local_log_dir: str,
+                         exp_name: str, extra_pull_dirs: list = None):
     """Add a job to the auto-pull manifest."""
     global _auto_pull_jobs
     _auto_pull_jobs.append({
@@ -96,6 +130,7 @@ def _add_job_to_manifest(host: str, remote_log_dir: str, local_log_dir: str, exp
         'remote_log_dir': remote_log_dir,
         'local_log_dir': local_log_dir,
         'exp_name': exp_name,
+        'extra_pull_dirs': extra_pull_dirs or [],
         'pid_file': os.path.join(remote_log_dir, '.chester_pid'),
         'status': 'pending',
         'submitted_at': datetime.datetime.now().isoformat()
@@ -441,6 +476,7 @@ def run_experiment_lite(
         auto_pull=False,  # Enable automatic result pulling from remote
         auto_pull_interval=60,  # Poll interval in seconds for auto-pull
         sync_env=None,  # Override sync_on_launch config (None = use config)
+        extra_pull_dirs=None,  # List of extra directories to pull (relative to PROJECT_PATH or absolute)
         **kwargs):
     """
     Serialize the stubbed method call and run the experiment using the specified mode.
@@ -677,7 +713,8 @@ def run_experiment_lite(
                     host=host,
                     remote_log_dir=remote_log_dir,
                     local_log_dir=local_log_dir,
-                    exp_name=task['exp_name']
+                    exp_name=task['exp_name'],
+                    extra_pull_dirs=_resolve_extra_pull_dirs(extra_pull_dirs, mode)
                 )
 
             if last_variant:
@@ -750,7 +787,8 @@ def run_experiment_lite(
                     host=mode,
                     remote_log_dir=remote_log_dir,
                     local_log_dir=local_log_dir,
-                    exp_name=task['exp_name']
+                    exp_name=task['exp_name'],
+                    extra_pull_dirs=_resolve_extra_pull_dirs(extra_pull_dirs, mode)
                 )
 
             # Cleanup
@@ -836,7 +874,8 @@ def run_experiment_lite(
                     host=host,
                     remote_log_dir=remote_log_dir,
                     local_log_dir=local_log_dir,
-                    exp_name=task['exp_name']
+                    exp_name=task['exp_name'],
+                    extra_pull_dirs=_resolve_extra_pull_dirs(extra_pull_dirs, mode)
                 )
 
             if not dry:

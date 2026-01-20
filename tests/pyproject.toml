@@ -4,10 +4,10 @@ version = "0.1.0"
 description = "Chester MNIST test suite"
 requires-python = ">=3.8"
 dependencies = [
-    "chester",
+    "chester-ml",
     "torch",
     "torchvision",
 ]
 
 [tool.uv.sources]
-chester = { path = "..", editable = true }
+chester-ml = { path = "..", editable = true }
