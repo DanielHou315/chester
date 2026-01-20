@@ -21,6 +21,7 @@ import argparse
 import subprocess
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 from chester import config
 
@@ -65,6 +66,99 @@ def pull_results(host: str, remote_log_dir: str, local_log_dir: str, bare: bool 
         return False
 
 
+def get_remote_pid(host: str, remote_log_dir: str) -> Optional[int]:
+    """Read the saved PID from .chester_pid file on remote."""
+    pid_file = os.path.join(remote_log_dir, '.chester_pid')
+    cmd = f'ssh {host} "cat {pid_file} 2>/dev/null"'
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=30
+        )
+        if result.stdout.strip():
+            return int(result.stdout.strip())
+    except subprocess.TimeoutExpired:
+        print(f"[auto_pull] SSH timeout reading PID from {host}:{pid_file}")
+    except ValueError:
+        print(f"[auto_pull] Invalid PID in {host}:{pid_file}")
+    except Exception as e:
+        print(f"[auto_pull] Error reading PID from {host}:{pid_file}: {e}")
+    return None
+
+
+def check_process_running(host: str, pid: int) -> bool:
+    """Check if process with given PID is still running on remote."""
+    cmd = f'ssh {host} "ps -p {pid} -o pid= 2>/dev/null"'
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=30
+        )
+        return result.stdout.strip() != ''
+    except subprocess.TimeoutExpired:
+        print(f"[auto_pull] SSH timeout checking process {pid} on {host}")
+        return True  # Assume running if can't check (conservative)
+    except Exception as e:
+        print(f"[auto_pull] Error checking process {pid} on {host}: {e}")
+        return True  # Assume running if can't check
+
+
+def kill_process_tree(host: str, pid: int):
+    """Kill process and all its descendants on remote. SIGTERM then SIGKILL."""
+    # First, send SIGTERM to allow graceful shutdown
+    term_cmd = f'ssh {host} "pkill -TERM -P {pid} 2>/dev/null; kill -TERM {pid} 2>/dev/null || true"'
+    try:
+        subprocess.run(term_cmd, shell=True, timeout=30)
+        print(f"[auto_pull] Sent SIGTERM to PID {pid} and children on {host}")
+    except Exception as e:
+        print(f"[auto_pull] Failed to send SIGTERM: {e}")
+        return
+
+    # Wait 5 seconds for graceful shutdown
+    time.sleep(5)
+
+    # Check if still running, then SIGKILL
+    if check_process_running(host, pid):
+        kill_cmd = f'ssh {host} "pkill -KILL -P {pid} 2>/dev/null; kill -KILL {pid} 2>/dev/null || true"'
+        try:
+            subprocess.run(kill_cmd, shell=True, timeout=30)
+            print(f"[auto_pull] Sent SIGKILL to PID {pid} and children on {host}")
+        except Exception as e:
+            print(f"[auto_pull] Failed to send SIGKILL: {e}")
+
+
+def check_job_status(job: dict) -> str:
+    """
+    Check job status based on .done marker and process state.
+
+    Returns:
+        'running': Job is still running
+        'done': Job completed successfully (.done exists, process exited)
+        'done_orphans': Job completed but processes still running
+        'failed': Process died without creating .done
+    """
+    host = job['host']
+    remote_log_dir = job['remote_log_dir']
+
+    done = check_done_marker(host, remote_log_dir)
+    pid = get_remote_pid(host, remote_log_dir)
+
+    if pid is None:
+        # No PID file yet - job may not have started or is a legacy job
+        if done:
+            return 'done'
+        return 'running'
+
+    running = check_process_running(host, pid)
+
+    if done and not running:
+        return 'done'
+    elif done and running:
+        return 'done_orphans'  # Script finished but processes still running
+    elif not done and not running:
+        return 'failed'  # Process died without creating .done
+    else:  # not done and running
+        return 'running'
+
+
 def load_manifest(manifest_path: str) -> list:
     """Load job manifest from JSON file."""
     if not os.path.exists(manifest_path):
@@ -82,7 +176,12 @@ def save_manifest(manifest_path: str, jobs: list):
 
 def poll_and_pull(manifest_path: str, poll_interval: int = 60, bare: bool = False, once: bool = False):
     """
-    Main polling loop. Checks for .done markers and pulls completed jobs.
+    Main polling loop. Checks job status and pulls completed/failed jobs.
+
+    Uses PID-based tracking to detect:
+    - Successful completion (.done exists, process exited)
+    - Orphan processes (.done exists, process still running -> kill and pull)
+    - Failed jobs (process died without .done -> pull logs)
 
     Args:
         manifest_path: Path to the job manifest JSON file
@@ -106,12 +205,11 @@ def poll_and_pull(manifest_path: str, poll_interval: int = 60, bare: bool = Fals
         pending_jobs = [j for j in jobs if j.get('status') == 'pending']
 
         if not pending_jobs:
-            if once:
-                print("[auto_pull] No pending jobs, exiting")
-                break
-            print(f"[auto_pull] No pending jobs, sleeping {poll_interval}s")
-            time.sleep(poll_interval)
-            continue
+            # All jobs resolved - print summary and exit
+            print("[auto_pull] All jobs resolved:")
+            for j in jobs:
+                print(f"  {j.get('exp_name', 'unknown')}: {j.get('status')}")
+            break
 
         print(f"[auto_pull] Checking {len(pending_jobs)} pending jobs...")
 
@@ -121,9 +219,10 @@ def poll_and_pull(manifest_path: str, poll_interval: int = 60, bare: bool = Fals
             local_log_dir = job['local_log_dir']
             exp_name = job.get('exp_name', 'unknown')
 
-            if check_done_marker(host, remote_log_dir):
-                print(f"[auto_pull] Job completed: {exp_name} on {host}")
+            status = check_job_status(job)
 
+            if status == 'done':
+                print(f"[auto_pull] Job completed: {exp_name} on {host}")
                 if pull_results(host, remote_log_dir, local_log_dir, bare=bare):
                     job['status'] = 'pulled'
                     job['pulled_at'] = datetime.now().isoformat()
@@ -131,9 +230,33 @@ def poll_and_pull(manifest_path: str, poll_interval: int = 60, bare: bool = Fals
                 else:
                     job['status'] = 'pull_failed'
                     print(f"[auto_pull] Failed to pull: {exp_name}")
-
-                # Save manifest after each job status change
                 save_manifest(manifest_path, jobs)
+
+            elif status == 'done_orphans':
+                print(f"[auto_pull] Job completed with orphan processes: {exp_name} on {host}")
+                pid = get_remote_pid(host, remote_log_dir)
+                if pid:
+                    kill_process_tree(host, pid)
+                if pull_results(host, remote_log_dir, local_log_dir, bare=bare):
+                    job['status'] = 'pulled'
+                    job['pulled_at'] = datetime.now().isoformat()
+                    job['had_orphans'] = True
+                    print(f"[auto_pull] Successfully pulled (after cleanup): {local_log_dir}")
+                else:
+                    job['status'] = 'pull_failed'
+                    print(f"[auto_pull] Failed to pull: {exp_name}")
+                save_manifest(manifest_path, jobs)
+
+            elif status == 'failed':
+                print(f"[auto_pull] Job FAILED (process died): {exp_name} on {host}")
+                # Pull logs for debugging (always use bare mode for failed jobs)
+                pull_results(host, remote_log_dir, local_log_dir, bare=True)
+                job['status'] = 'failed'
+                job['failed_at'] = datetime.now().isoformat()
+                print(f"[auto_pull] Pulled logs from failed job: {local_log_dir}")
+                save_manifest(manifest_path, jobs)
+
+            # else: status == 'running' - keep polling
 
         if once:
             break

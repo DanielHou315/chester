@@ -96,6 +96,7 @@ def _add_job_to_manifest(host: str, remote_log_dir: str, local_log_dir: str, exp
         'remote_log_dir': remote_log_dir,
         'local_log_dir': local_log_dir,
         'exp_name': exp_name,
+        'pid_file': os.path.join(remote_log_dir, '.chester_pid'),
         'status': 'pending',
         'submitted_at': datetime.datetime.now().isoformat()
     })
@@ -385,32 +386,21 @@ def rsync_code(remote_host, remote_dir):
     """
     Sync project code to remote host.
 
-    Syncs from PROJECT_PATH (directory containing chester.yaml) to remote_dir.
-    Uses rsync_include/rsync_exclude from:
-    1. Project root (if exists) - for project-specific customization
-    2. Chester package (fallback) - for sensible defaults
+    Syncs from PROJECT_PATH to remote_dir.
+    Requires rsync_include and rsync_exclude lists in chester.yaml.
     """
     project_path = config.PROJECT_PATH
     print(f'Ready to rsync code: {project_path} -> {remote_host}:{remote_dir}')
 
-    # Check for project-specific rsync files, fall back to package defaults
-    chester_dir = os.path.dirname(os.path.abspath(__file__))
+    yaml_include = config.RSYNC_INCLUDE
+    yaml_exclude = config.RSYNC_EXCLUDE
 
-    project_include = os.path.join(project_path, 'rsync_include')
-    project_exclude = os.path.join(project_path, 'rsync_exclude')
+    if not yaml_include and not yaml_exclude:
+        raise ValueError("rsync_include and rsync_exclude must be defined in chester.yaml")
 
-    if os.path.exists(project_include):
-        rsync_include = project_include
-    else:
-        rsync_include = os.path.join(chester_dir, 'rsync_include')
-
-    if os.path.exists(project_exclude):
-        rsync_exclude = project_exclude
-    else:
-        rsync_exclude = os.path.join(chester_dir, 'rsync_exclude')
-
-    # Sync from project root (where chester.yaml is)
-    cmd = f"rsync -avzh --delete --include-from='{rsync_include}' --exclude-from='{rsync_exclude}' {project_path}/ {remote_host}:{remote_dir}"
+    include_args = ' '.join(f"--include='{p}'" for p in yaml_include)
+    exclude_args = ' '.join(f"--exclude='{p}'" for p in yaml_exclude)
+    cmd = f"rsync -avzh --delete {include_args} {exclude_args} {project_path}/ {remote_host}:{remote_dir}"
     print(cmd)
     os.system(cmd)
 
@@ -855,11 +845,13 @@ def run_experiment_lite(
                 os.system(f'ssh {host} "mkdir -p {remote_log_dir}"')
                 os.system(f'scp {local_script_name} {host}:{remote_script_path}')
 
-                # Execute via SSH with nohup
+                # Execute via SSH with nohup, save PID for tracking
                 stdout_log = os.path.join(remote_log_dir, 'stdout.log')
                 stderr_log = os.path.join(remote_log_dir, 'stderr.log')
+                pid_file = os.path.join(remote_log_dir, '.chester_pid')
                 ssh_cmd = (f'ssh {host} "cd {remote_dir} && '
-                           f'nohup bash {remote_script_path} > {stdout_log} 2> {stderr_log} &"')
+                           f'nohup bash {remote_script_path} > {stdout_log} 2> {stderr_log} & '
+                           f'echo \\$! > {pid_file}"')
 
                 print(f'[chester] Launching on {host}: {task["exp_name"]}')
                 print(f'[chester] Remote log dir: {remote_log_dir}')

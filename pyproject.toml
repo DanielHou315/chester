@@ -3,12 +3,15 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "chester"
-version = "0.2.0"
+name = "chester-ml"
+version = "0.2.1"
 description = "ML experiment launcher for local, SLURM, SSH, and EC2 environments"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.8"
+authors = [
+    {name = "Daniel Hou"}
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",

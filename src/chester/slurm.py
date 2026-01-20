@@ -78,9 +78,11 @@ def get_package_manager_setup_commands(sync=True, source_prepare=True):
     else:
         raise ValueError(f"chester config: unknown package_manager '{pkg_manager}' (expected 'uv' or 'conda')")
 
-    # Source prepare.sh for custom project setup (if exists)
+    # Run custom prepare commands from config (replaces prepare.sh)
     if source_prepare:
-        commands.append('if [ -f ./prepare.sh ]; then . ./prepare.sh; fi')
+        prepare_cmds = config.PREPARE_COMMANDS or []
+        for cmd in prepare_cmds:
+            commands.append(cmd)
 
     return commands
 
