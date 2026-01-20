@@ -4,3 +4,12 @@ config.py
 .venv/
 data/
 tests/chester.yaml
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/

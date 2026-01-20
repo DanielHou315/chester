@@ -1,2 +1,0 @@
-[console_scripts]
-chester-pull = chester.pull_result:main
