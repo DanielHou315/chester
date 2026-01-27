@@ -180,7 +180,15 @@ uv run python -m chester.config
 
 ## Publishing
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the detailed release workflow.
+
+**Summary:**
+1. Bump version: `python scripts/bump_version.py [patch|minor|major]`
+2. Commit and push to `main`
+3. Merge `main` into `release` and push to trigger CI build
+
 ```bash
+# Old manual method (still valid but CI is preferred)
 # Bump version in pyproject.toml
 uv build
 uv publish  # or: twine upload dist/*
