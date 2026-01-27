@@ -134,6 +134,7 @@ def to_hydra_command(
     return command 
 
 def run_hydra_command(command: str, log_dir: str, stub_method_call: Callable):
+    from chester import config
     hydra, HydraConfig, read_write, open_dict = _require_hydra()
 
     cmd_parts = command.split()
@@ -146,7 +147,9 @@ def run_hydra_command(command: str, log_dir: str, stub_method_call: Callable):
 
     # Everything after the python module are hydra overrides
     overrides = cmd_parts[module_start_idx:]
-    with hydra.initialize(config_path="../configs"):
+    # Use hydra_config_path from chester.yaml (already resolved to absolute path)
+    config_dir = config.HYDRA_CONFIG_PATH
+    with hydra.initialize_config_dir(config_dir=config_dir, version_base=None):
         cfg = hydra.compose(config_name="config",
                             overrides=overrides,
                             return_hydra_config=True)
