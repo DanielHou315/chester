@@ -1,0 +1,76 @@
+# Chester Configuration Example
+# Copy this file to chester.yaml and customize for your environment
+
+# Local log directory (relative to this file's location or absolute)
+log_dir: data
+
+# Package manager: "uv" or "conda"
+package_manager: uv
+sync_on_launch: true
+# For conda:
+# conda_env: myenv
+# conda_command: mamba
+
+# Host address mapping (hostname or SSH alias)
+host_address:
+  local: ""
+  gl: "greatlakes"  # SSH alias or hostname
+
+# SSH hosts (non-SLURM remote hosts)
+ssh_hosts: []
+
+# Remote directories for each mode
+remote_dir:
+  local: /path/to/local/project
+  gl: /path/to/remote/project
+
+remote_log_dir:
+  local: /path/to/local/project/data
+  gl: /path/to/remote/project/data
+
+# SLURM configuration
+remote_header:
+  gl: |
+    #!/usr/bin/env bash
+    #SBATCH --nodes=1
+    #SBATCH --partition=gpu
+    #SBATCH --gpus=1
+    #SBATCH --time=24:00:00
+
+# Singularity image paths (optional)
+simg_path:
+  gl: null
+
+# CUDA module to load
+cuda_module:
+  gl: cuda/12.1
+
+# Other modules to load
+modules:
+  gl: []
+
+# Singularity mount options
+remote_mount_option:
+  gl: ""
+
+# Rsync patterns for code syncing (optional)
+rsync_include: []
+rsync_exclude:
+  - data/
+  - .venv/
+  - __pycache__/
+  - "*.pyc"
+  - .git/
+
+# Custom commands to run after setup
+prepare_commands: []
+
+# Hydra config path (relative to project or absolute)
+hydra_config_path: configs
+
+# Autobot scheduler configuration (optional)
+autobot_nodelist: []
+gpu_state_dir: ""
+chester_queue_dir: ""
+chester_scheduler_log_dir: ""
+scheduler_username: ""  # Defaults to current user if empty

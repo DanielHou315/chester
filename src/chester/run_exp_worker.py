@@ -8,10 +8,8 @@ import uuid
 import pickle as pickle
 import base64
 import joblib
-import sys
-# sys.path.insert(0, '/home/zixuanhu/UMD')
+
 from . import config
-# sys.path.insert(0, PROJECT_PATH)
 
 
 def run_experiment(argv):

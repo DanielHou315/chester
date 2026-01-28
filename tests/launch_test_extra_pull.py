@@ -29,10 +29,11 @@ from chester import config
 from test_extra_pull import run_test_task
 
 # Remote paths for syncing chester repo
-REMOTE_CHESTER_DIR = {
-    'gl': '/home/houhd/code/chester',
-    'armfranka': '/home/danielhou/code/chester',
-}
+# Set via environment variables: CHESTER_REMOTE_DIR_GL, CHESTER_REMOTE_DIR_ARMFRANKA, etc.
+def get_remote_chester_dir(mode: str) -> str:
+    """Get remote chester directory from environment variable."""
+    env_var = f"CHESTER_REMOTE_DIR_{mode.upper()}"
+    return os.environ.get(env_var, '')
 
 
 def sync_chester_to_remote(mode: str, dry: bool = False):
@@ -40,13 +41,14 @@ def sync_chester_to_remote(mode: str, dry: bool = False):
     if mode == 'local':
         return
 
-    if mode not in REMOTE_CHESTER_DIR:
+    remote_dir = get_remote_chester_dir(mode)
+    if not remote_dir:
         print(f"Warning: No remote chester directory configured for mode '{mode}'")
+        print(f"Set CHESTER_REMOTE_DIR_{mode.upper()} environment variable")
         return
 
     chester_repo = os.path.dirname(config.PROJECT_PATH)
     remote_host = config.HOST_ADDRESS.get(mode, mode)
-    remote_dir = REMOTE_CHESTER_DIR[mode]
 
     chester_src_dir = os.path.join(chester_repo, 'src', 'chester')
     rsync_exclude = os.path.join(chester_src_dir, 'rsync_exclude')

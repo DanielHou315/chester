@@ -2,7 +2,13 @@
 .idea
 .venv/
 data/
+
+# User-specific configuration files (use *.example as templates)
+chester.yaml
 tests/chester.yaml
+tests/.env
+.env
+.envrc
 
 # Build artifacts
 dist/

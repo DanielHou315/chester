@@ -82,6 +82,8 @@ def _get_defaults() -> Dict[str, Any]:
         'gpu_state_dir': '',
         'chester_queue_dir': '',
         'chester_scheduler_log_dir': '',
+        # Scheduler username (for autobot scheduler, defaults to current user)
+        'scheduler_username': os.environ.get('USER', os.environ.get('USERNAME', '')),
         # Package manager config
         'package_manager': 'uv',  # 'uv' or 'conda'
         'conda_env': None,  # Required if package_manager is 'conda'
@@ -217,6 +219,8 @@ _ATTR_MAPPING = {
     'GPU_STATE_DIR': 'gpu_state_dir',
     'CHESTER_QUEUE_DIR': 'chester_queue_dir',
     'CHESTER_CHEDULER_LOG_DIR': 'chester_scheduler_log_dir',  # Note: typo preserved for compatibility
+    'CHESTER_SCHEDULER_LOG_DIR': 'chester_scheduler_log_dir',  # Correct spelling
+    'SCHEDULER_USERNAME': 'scheduler_username',
     # Package manager config
     'PACKAGE_MANAGER': 'package_manager',
     'CONDA_ENV': 'conda_env',

@@ -28,7 +28,7 @@ def check_available_nodes():
         counter = 0
         for i, data in enumerate(gpu_data):
             for proc_data in data['procs']:
-                if proc_data[1] == 'zixuanhu':
+                if proc_data[1] == config.SCHEDULER_USERNAME:
                     counter += 1
         print(f"{counter:15} | {name}")
     return available_nodes

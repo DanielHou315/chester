@@ -10,19 +10,19 @@ from .. import config
 from ..utils_logger import timelog
 import psutil
 
-check_interval = 120  # Check every 60 seconds for available GPUs
-user_name = 'zixuanhu'
+check_interval = 120  # Check every 120 seconds for available GPUs
 
 
 def checkIfProcessRunning(processName):
     '''
     Check if there is any running process that contains the given name processName.
     '''
+    scheduler_user = config.SCHEDULER_USERNAME
     # Iterate over the all the running process
     for proc in psutil.process_iter():
         try:
             # Check if process name contains the given name string.
-            if processName.lower() in proc.name().lower() and user_name == proc.username():
+            if processName.lower() in proc.name().lower() and scheduler_user == proc.username():
                 return True
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
@@ -49,8 +49,6 @@ def check_available_nodes():
         gpu_ids = []
         for i, data in enumerate(gpu_data):
             if len(data['procs']) == 0:  # GPU is available if no user process is found on the GPU
-                # if data['mem_usage'] < 5 \
-                #     or (len(data['procs']) > 0 and data['procs'][0][1] == 'zixuanhu' and data['mem_usage'] < 40):
                 gpu_ids.append((i, data['mem_free']))
         if len(gpu_ids) > 0:
             available_nodes[name] = gpu_ids
@@ -147,9 +145,8 @@ if __name__ == '__main__':
                 if real_node in available_GPUs:
                     gpu_ids = available_GPUs[real_node]
                     if len(gpu_ids) > 0:
-                        env_command = f'CUDA_VISIBLE_DEVICES={gpu_ids[0][0]} '  # CUDA_LAUNCH_BLOCKING=1 '
+                        env_command = f'CUDA_VISIBLE_DEVICES={gpu_ids[0][0]} '
                         command = f"ssh -q {real_node} \'{env_command} bash {script_file} </dev/null >{stdout_file} 2>{stderr_file} &\'"
-                        # command = f"ssh -q {real_node} \'{env_command} python /home/xlin3/test.py </dev/null >{stdout_file} 2>{stderr_file} &\'"
                         rm_command = f'rm {script}'
                         timelog(f"Job launched on node {real_node}, GPU {gpu_ids[0]}, {script_file}")
                         os.system(command)
@@ -162,8 +159,12 @@ if __name__ == '__main__':
         if succ_tasks == len(sorted_tasks):
             timelog(f'All {succ_tasks} jobs done!')
             print("==================== ", flush=True)
-            last_log = sorted(glob.glob('/home/zixuanhu/chester_scheduler/logs/*'))[-1]
-            dir_name = os.path.dirname(last_log)
-            os.system(f'cp {last_log}  {dir_name}/last_log.txt')
+            if config.CHESTER_SCHEDULER_LOG_DIR:
+                log_pattern = os.path.join(config.CHESTER_SCHEDULER_LOG_DIR, '*')
+                log_files = sorted(glob.glob(log_pattern))
+                if log_files:
+                    last_log = log_files[-1]
+                    dir_name = os.path.dirname(last_log)
+                    os.system(f'cp {last_log}  {dir_name}/last_log.txt')
             break
         time.sleep(check_interval)
