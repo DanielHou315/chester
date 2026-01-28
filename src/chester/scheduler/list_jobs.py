@@ -1,6 +1,6 @@
 import os
-from chester import config
-from chester.utils_logger import timelog
+from .. import config
+from ..utils_logger import timelog
 import psutil
 import os
 import glob

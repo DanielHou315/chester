@@ -3,8 +3,8 @@ import os.path as osp
 import re
 from subprocess import run
 from tempfile import NamedTemporaryFile
-from chester import config
-from chester.hydra_utils import to_hydra_command
+from . import config
+from .hydra_utils import to_hydra_command
 
 # TODO remove the singularity part
 

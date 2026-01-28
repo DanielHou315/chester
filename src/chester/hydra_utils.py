@@ -134,7 +134,7 @@ def to_hydra_command(
     return command 
 
 def run_hydra_command(command: str, log_dir: str, stub_method_call: Callable):
-    from chester import config
+    from . import config
     hydra, HydraConfig, read_write, open_dict = _require_hydra()
 
     cmd_parts = command.split()

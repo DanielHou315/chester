@@ -15,10 +15,10 @@ import time
 import datetime
 import dateutil.tz
 import json
-from chester import config, config_ec2
-from chester.hydra_utils import to_hydra_command, run_hydra_command
-from chester.slurm import to_slurm_command, to_local_command, to_ssh_command
-from chester.utils_s3 import launch_ec2, s3_sync_code
+from . import config, config_ec2
+from .hydra_utils import to_hydra_command, run_hydra_command
+from .slurm import to_slurm_command, to_local_command, to_ssh_command
+from .utils_s3 import launch_ec2, s3_sync_code
 
 
 # Auto-pull manifest management

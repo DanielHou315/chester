@@ -6,8 +6,8 @@ import pickle
 import time
 import sys
 
-from chester import config
-from chester.utils_logger import timelog
+from .. import config
+from ..utils_logger import timelog
 import psutil
 
 check_interval = 120  # Check every 60 seconds for available GPUs

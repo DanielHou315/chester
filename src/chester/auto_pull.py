@@ -23,7 +23,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
-from chester import config
+from . import config
 
 
 def check_done_marker(host: str, remote_log_dir: str) -> bool:

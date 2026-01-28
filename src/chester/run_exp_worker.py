@@ -10,7 +10,7 @@ import base64
 import joblib
 import sys
 # sys.path.insert(0, '/home/zixuanhu/UMD')
-from chester import config
+from . import config
 # sys.path.insert(0, PROJECT_PATH)
 
 

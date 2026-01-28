@@ -3,7 +3,7 @@ import os
 import argparse
 
 # sys.path.append('.')
-from chester import config
+from . import config
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
