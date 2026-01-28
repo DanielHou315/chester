@@ -93,26 +93,33 @@ def main():
     timestamp = datetime.now().strftime('%m%d_%H%M%S')
     exp_name = f"test_extra_pull_{timestamp}"
 
-    # Define the extra directory to pull (relative to PROJECT_PATH)
-    # This will be: tests/data/generated_data on both local and remote
-    extra_dir_relative = 'data/generated_data'
+    # Define extra directories to pull (relative to PROJECT_PATH)
+    checkpoint_dir_relative = 'data/checkpoints'
+    artifact_dir_relative = 'data/artifacts'
 
     # Create variant using VariantGenerator (required for auto-pull to work)
     vg = VariantGenerator()
     vg.add('wait_seconds', [args.wait])
-    # Pass the absolute extra_dir path to the task
-    # On local: PROJECT_PATH/data/generated_data
-    # On remote: REMOTE_DIR/data/generated_data
-    extra_dir_path = os.path.join(
-        config.REMOTE_DIR.get(args.mode, config.PROJECT_PATH),
-        extra_dir_relative
-    ) if args.mode != 'local' else os.path.join(config.PROJECT_PATH, extra_dir_relative)
-    vg.add('extra_dir', [extra_dir_path])
+
+    # Get the remote base directory
+    remote_base = config.REMOTE_DIR.get(args.mode, config.PROJECT_PATH)
+    local_base = config.PROJECT_PATH
+
+    # Pass absolute paths to the task (remote paths for remote mode)
+    if args.mode != 'local':
+        checkpoint_dir_path = os.path.join(remote_base, checkpoint_dir_relative)
+        artifact_dir_path = os.path.join(remote_base, artifact_dir_relative)
+    else:
+        checkpoint_dir_path = os.path.join(local_base, checkpoint_dir_relative)
+        artifact_dir_path = os.path.join(local_base, artifact_dir_relative)
+
+    vg.add('checkpoint_dir', [checkpoint_dir_path])
+    vg.add('artifact_dir', [artifact_dir_path])
 
     print(f"\n[test] Launching test experiment: {exp_name}")
     print(f"[test] Mode: {args.mode}")
     print(f"[test] Wait time: {args.wait} seconds")
-    print(f"[test] Extra pull dir: {extra_dir_relative}")
+    print(f"[test] Extra pull dirs: {checkpoint_dir_relative}, {artifact_dir_relative}")
 
     # Launch experiment (using VariantGenerator to set first/last variant flags)
     for variant in vg.variants():
@@ -125,7 +132,7 @@ def main():
             dry=args.dry,
             auto_pull=(args.mode != 'local'),
             auto_pull_interval=15,  # Poll every 15 seconds for faster testing
-            extra_pull_dirs=[extra_dir_relative],  # Key feature being tested!
+            extra_pull_dirs=[checkpoint_dir_relative, artifact_dir_relative],  # Two dirs!
         )
 
     if args.dry:
@@ -137,7 +144,8 @@ def main():
             print(f"[test] Expected completion in ~{args.wait + 30} seconds")
             print(f"\n[test] Files to be pulled:")
             print(f"  1. Log dir: data/test_extra_pull/{exp_name}/")
-            print(f"  2. Extra dir: {extra_dir_relative}/")
+            print(f"  2. Checkpoints: {checkpoint_dir_relative}/")
+            print(f"  3. Artifacts: {artifact_dir_relative}/")
             print(f"\n[test] Check manifest in data/.chester_manifests/ for status")
 
 
