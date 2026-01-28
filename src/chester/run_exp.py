@@ -158,12 +158,11 @@ def _save_and_spawn_auto_pull(dry: bool = False, poll_interval: int = 60):
         return
 
     # Spawn background poller
-    chester_dir = os.path.dirname(os.path.abspath(__file__))
-    auto_pull_script = os.path.join(chester_dir, 'auto_pull.py')
     log_dir = os.path.join(config.LOG_DIR, '.chester_manifests')
     log_file = _auto_pull_manifest_path.replace('.json', '.log')
 
-    cmd = (f'nohup python {auto_pull_script} '
+    # Run as module to support relative imports
+    cmd = (f'nohup python -m chester.auto_pull '
            f'--manifest {_auto_pull_manifest_path} '
            f'--poll-interval {poll_interval} '
            f'> {log_file} 2>&1 &')
