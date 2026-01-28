@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chester-ml"
-version = "0.4.0"
+version = "0.4.1"
 description = "ML experiment launcher for local, SLURM, SSH, and EC2 environments"
 readme = "README.md"
 license = "MIT"
