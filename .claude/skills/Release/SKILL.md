@@ -29,7 +29,22 @@ git status --porcelain
 
 If there are uncommitted changes, STOP and ask the user to commit or stash them first.
 
-### 2. Bump Version
+### 2. Run Tests Locally
+
+**IMPORTANT:** Tests must be run locally before releasing. They cannot run on GitHub CI because they require SSH access to remote hosts.
+
+```bash
+cd tests
+uv sync
+uv run python -m pytest test_local.py -v
+```
+
+All tests must pass before proceeding. If tests fail:
+1. Debug and fix the issues
+2. Commit the fixes
+3. Re-run tests until they pass
+
+### 3. Bump Version
 
 Run the bump script with the specified part (default: patch):
 
@@ -39,7 +54,7 @@ python scripts/bump_version.py <part>
 
 Note the new version number from the output.
 
-### 3. Commit Version Bump
+### 4. Commit Version Bump
 
 ```bash
 git add pyproject.toml
@@ -47,7 +62,7 @@ git commit -m "Bump version to <new_version>"
 git push origin main
 ```
 
-### 4. Sync to Release Branch
+### 5. Sync to Release Branch
 
 ```bash
 git checkout release
@@ -55,7 +70,7 @@ git merge main --ff-only
 git push origin release
 ```
 
-### 5. Build Package
+### 6. Build Package
 
 ```bash
 rm -rf dist/
@@ -64,7 +79,7 @@ uv build
 
 Verify the dist/ directory contains the wheel and tarball.
 
-### 6. Publish to PyPI
+### 7. Publish to PyPI
 
 ```bash
 twine upload dist/*
@@ -72,20 +87,20 @@ twine upload dist/*
 
 This uses credentials from `~/.pypirc`. If it fails, inform the user to check their PyPI credentials.
 
-### 7. Tag Release
+### 8. Tag Release
 
 ```bash
 git tag -a v<new_version> -m "Release v<new_version>"
 git push origin v<new_version>
 ```
 
-### 8. Return to Main
+### 9. Return to Main
 
 ```bash
 git checkout main
 ```
 
-### 9. Summary
+### 10. Summary
 
 Report to the user:
 - New version number
