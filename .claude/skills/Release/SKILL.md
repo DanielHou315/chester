@@ -29,7 +29,19 @@ git status --porcelain
 
 If there are uncommitted changes, STOP and ask the user to commit or stash them first.
 
-### 2. Run Tests Locally
+### 2. Verify Critical Files Are Tracked
+
+Check that essential package files are not gitignored:
+
+```bash
+# These should return nothing (not ignored)
+git check-ignore src/chester/config.py
+git check-ignore src/chester/run_exp.py
+```
+
+If any critical files are gitignored, fix `.gitignore` and add them with `git add -f`.
+
+### 3. Run Tests Locally
 
 **IMPORTANT:** Tests must be run locally before releasing. They cannot run on GitHub CI because they require SSH access to remote hosts.
 
@@ -44,7 +56,7 @@ All tests must pass before proceeding. If tests fail:
 2. Commit the fixes
 3. Re-run tests until they pass
 
-### 3. Bump Version
+### 4. Bump Version
 
 Run the bump script with the specified part (default: patch):
 
@@ -54,7 +66,7 @@ python scripts/bump_version.py <part>
 
 Note the new version number from the output.
 
-### 4. Commit Version Bump
+### 5. Commit Version Bump
 
 ```bash
 git add pyproject.toml
@@ -62,7 +74,7 @@ git commit -m "Bump version to <new_version>"
 git push origin main
 ```
 
-### 5. Sync to Release Branch
+### 6. Sync to Release Branch
 
 ```bash
 git checkout release
@@ -70,7 +82,7 @@ git merge main --ff-only
 git push origin release
 ```
 
-### 6. Build Package
+### 7. Build Package
 
 ```bash
 rm -rf dist/
@@ -79,7 +91,7 @@ uv build
 
 Verify the dist/ directory contains the wheel and tarball.
 
-### 7. Publish to PyPI
+### 8. Publish to PyPI
 
 ```bash
 twine upload dist/*
@@ -87,20 +99,20 @@ twine upload dist/*
 
 This uses credentials from `~/.pypirc`. If it fails, inform the user to check their PyPI credentials.
 
-### 8. Tag Release
+### 9. Tag Release
 
 ```bash
 git tag -a v<new_version> -m "Release v<new_version>"
 git push origin v<new_version>
 ```
 
-### 9. Return to Main
+### 10. Return to Main
 
 ```bash
 git checkout main
 ```
 
-### 10. Summary
+### 11. Summary
 
 Report to the user:
 - New version number
