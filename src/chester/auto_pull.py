@@ -29,10 +29,10 @@ from . import config
 def check_done_marker(host: str, remote_log_dir: str) -> bool:
     """Check if .done marker exists on remote host via SSH."""
     done_file = os.path.join(remote_log_dir, '.done')
-    cmd = f'ssh {host} "test -f {done_file} && echo done"'
+    cmd = ["ssh", host, f"test -f {done_file} && echo done"]
     try:
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=30
+            cmd, capture_output=True, text=True, timeout=30
         )
         return result.stdout.strip() == 'done'
     except subprocess.TimeoutExpired:
@@ -48,15 +48,22 @@ def pull_results(host: str, remote_log_dir: str, local_log_dir: str, bare: bool 
     # Create local directory if it doesn't exist
     os.makedirs(os.path.dirname(local_log_dir), exist_ok=True)
 
-    cmd = f'rsync -avzh --progress {host}:{remote_log_dir}/ {local_log_dir}/'
+    cmd = ["rsync", "-avzh", "--progress",
+           f"{host}:{remote_log_dir}/", f"{local_log_dir}/"]
 
     if bare:
         # Exclude large files
-        cmd += " --exclude '*.pkl' --exclude '*.png' --exclude '*.gif' --exclude '*.pth' --exclude '*.pt'"
+        cmd.extend([
+            "--exclude", "*.pkl",
+            "--exclude", "*.png",
+            "--exclude", "*.gif",
+            "--exclude", "*.pth",
+            "--exclude", "*.pt",
+        ])
 
     print(f"[auto_pull] Pulling: {host}:{remote_log_dir} -> {local_log_dir}")
     try:
-        result = subprocess.run(cmd, shell=True, timeout=600)  # 10 min timeout
+        result = subprocess.run(cmd, timeout=600)  # 10 min timeout
         return result.returncode == 0
     except subprocess.TimeoutExpired:
         print(f"[auto_pull] Rsync timeout for {host}:{remote_log_dir}")
@@ -95,10 +102,10 @@ def pull_extra_dirs(host: str, extra_pull_dirs: list, bare: bool = False) -> boo
 def get_remote_pid(host: str, remote_log_dir: str) -> Optional[int]:
     """Read the saved PID from .chester_pid file on remote."""
     pid_file = os.path.join(remote_log_dir, '.chester_pid')
-    cmd = f'ssh {host} "cat {pid_file} 2>/dev/null"'
+    cmd = ["ssh", host, f"cat {pid_file} 2>/dev/null"]
     try:
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=30
+            cmd, capture_output=True, text=True, timeout=30
         )
         if result.stdout.strip():
             return int(result.stdout.strip())
@@ -113,10 +120,10 @@ def get_remote_pid(host: str, remote_log_dir: str) -> Optional[int]:
 
 def check_process_running(host: str, pid: int) -> bool:
     """Check if process with given PID is still running on remote."""
-    cmd = f'ssh {host} "ps -p {pid} -o pid= 2>/dev/null"'
+    cmd = ["ssh", host, f"ps -p {pid} -o pid= 2>/dev/null"]
     try:
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=30
+            cmd, capture_output=True, text=True, timeout=30
         )
         return result.stdout.strip() != ''
     except subprocess.TimeoutExpired:
@@ -130,9 +137,10 @@ def check_process_running(host: str, pid: int) -> bool:
 def kill_process_tree(host: str, pid: int):
     """Kill process and all its descendants on remote. SIGTERM then SIGKILL."""
     # First, send SIGTERM to allow graceful shutdown
-    term_cmd = f'ssh {host} "pkill -TERM -P {pid} 2>/dev/null; kill -TERM {pid} 2>/dev/null || true"'
+    term_cmd = ["ssh", host,
+                f"pkill -TERM -P {pid} 2>/dev/null; kill -TERM {pid} 2>/dev/null || true"]
     try:
-        subprocess.run(term_cmd, shell=True, timeout=30)
+        subprocess.run(term_cmd, timeout=30)
         print(f"[auto_pull] Sent SIGTERM to PID {pid} and children on {host}")
     except Exception as e:
         print(f"[auto_pull] Failed to send SIGTERM: {e}")
@@ -143,9 +151,10 @@ def kill_process_tree(host: str, pid: int):
 
     # Check if still running, then SIGKILL
     if check_process_running(host, pid):
-        kill_cmd = f'ssh {host} "pkill -KILL -P {pid} 2>/dev/null; kill -KILL {pid} 2>/dev/null || true"'
+        kill_cmd = ["ssh", host,
+                    f"pkill -KILL -P {pid} 2>/dev/null; kill -KILL {pid} 2>/dev/null || true"]
         try:
-            subprocess.run(kill_cmd, shell=True, timeout=30)
+            subprocess.run(kill_cmd, timeout=30)
             print(f"[auto_pull] Sent SIGKILL to PID {pid} and children on {host}")
         except Exception as e:
             print(f"[auto_pull] Failed to send SIGKILL: {e}")
