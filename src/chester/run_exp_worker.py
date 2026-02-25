@@ -60,46 +60,15 @@ def run_experiment(argv):
 
     args = parser.parse_args(argv[1:])
 
-    # if args.seed is not None:
-    #     set_seed(args.seed)
-    #
-    # if args.n_parallel > 0:
-    #     from rllab.sampler import parallel_sampler
-    #     parallel_sampler.initialize(n_parallel=args.n_parallel)
-    #     if args.seed is not None:
-    #         parallel_sampler.set_seed(args.seed)
-    #
-    # if args.plot:
-    #     from rllab.plotter import plotter
-    #     plotter.init_worker()
-
     if args.log_dir is None:
         log_dir = osp.join(default_log_dir, args.exp_name)
     else:
         log_dir = args.log_dir
-    # tabular_log_file = osp.join(log_dir, args.tabular_log_file)
-    # text_log_file = osp.join(log_dir, args.text_log_file)
-    # params_log_file = osp.join(log_dir, args.params_log_file)
 
     if args.variant_data is not None:
         variant_data = pickle.loads(base64.b64decode(args.variant_data))
-        variant_log_file = osp.join(log_dir, args.variant_log_file)
-        # logger.log_variant(variant_log_file, variant_data)
     else:
         variant_data = None
-
-    # if not args.use_cloudpickle:
-    #     logger.log_parameters_lite(params_log_file, args)
-    #
-    # logger.add_text_output(text_log_file)
-    # logger.add_tabular_output(tabular_log_file)
-    # prev_snapshot_dir = logger.get_snapshot_dir()
-    # prev_mode = logger.get_snapshot_mode()
-    # logger.set_snapshot_dir(log_dir)
-    # logger.set_snapshot_mode(args.snapshot_mode)
-    # logger.set_snapshot_gap(args.snapshot_gap)
-    # logger.set_log_tabular_only(args.log_tabular_only)
-    # logger.push_prefix("[%s] " % args.exp_name)
 
     if args.resume_from is not None:
         data = joblib.load(args.resume_from)
@@ -107,24 +76,15 @@ def run_experiment(argv):
         algo = data['algo']
         algo.train()
     else:
-        # read from stdin
         if args.use_cloudpickle:
             import cloudpickle
             method_call = cloudpickle.loads(base64.b64decode(args.args_data))
             method_call(variant_data, log_dir, args.exp_name)
         else:
-            assert False
-            # data = pickle.loads(base64.b64decode(args.args_data))
-            # maybe_iter = concretize(data)
-            # if is_iterable(maybe_iter):
-            #     for _ in maybe_iter:
-            #         pass
-
-            # logger.set_snapshot_mode(prev_mode)
-            # logger.set_snapshot_dir(prev_snapshot_dir)
-            # logger.remove_tabular_output(tabular_log_file)
-            # logger.remove_text_output(text_log_file)
-            # logger.pop_prefix()
+            raise RuntimeError(
+                "Non-cloudpickle deserialization is no longer supported. "
+                "Use use_cloudpickle=True (the default in chester)."
+            )
 
 
 if __name__ == "__main__":

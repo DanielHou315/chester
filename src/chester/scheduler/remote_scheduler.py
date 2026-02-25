@@ -1,4 +1,11 @@
 # The scheduler sweeps over available GPUs for the nodes  in the CHESTER_QUEUE_DIR
+import warnings
+warnings.warn(
+    "Autobot scheduler is deprecated. Use SLURM or SSH backends instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import os
 import glob
 import pdb

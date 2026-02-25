@@ -1,6 +1,5 @@
 import os
 import os.path as osp
-import re
 from subprocess import run
 from tempfile import NamedTemporaryFile
 from . import config
@@ -126,36 +125,15 @@ def slurm_run_scripts(scripts):
     os.remove(file_temp.name)
 
 
-_find_unsafe = re.compile(r'[a-zA-Z0-9_^@%+=:,./-]').search
-
-
-def _shellquote(s):
-    """Return a shell-escaped version of the string *s*."""
-    if not s:
-        return "''"
-
-    if _find_unsafe(s) is None:
-        return s
-
-    # use single quotes, and put single quotes into double quotes
-    # the string $'b is then quoted as '$'"'"'b'
-
-    return "'" + s.replace("'", "'\"'\"'") + "'"
-
-
-def _to_param_val(v):
-    if v is None:
-        return ""
-    elif isinstance(v, list):
-        return " ".join(map(_shellquote, list(map(str, v))))
-    else:
-        return _shellquote(str(v))
+from .utils import shellquote as _shellquote, to_param_val as _to_param_val
 
 def to_local_command(
-    params, 
-    python_command="python", 
+    params,
+    python_command="python",
     script=None,
-    env={}):
+    env=None):
+    if env is None:
+        env = {}
     command = python_command + " " + script
 
     for k, v in env.items():

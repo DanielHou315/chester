@@ -16,7 +16,11 @@ Usage:
         )
 """
 
-__version__ = "0.2.0"
+try:
+    from importlib.metadata import version as _metadata_version
+    __version__ = _metadata_version("chester-ml")
+except Exception:
+    __version__ = "0.0.0"  # fallback if not installed
 __author__ = "Chester Authors"
 
 # Lazy imports to avoid requiring optional dependencies (hydra) at import time

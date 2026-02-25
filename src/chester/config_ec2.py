@@ -1,3 +1,10 @@
+import warnings
+warnings.warn(
+    "EC2 support is deprecated. Use backend configs in .chester/config.yaml instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import os.path as osp
 import os
 
