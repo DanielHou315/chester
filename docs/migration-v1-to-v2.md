@@ -12,7 +12,8 @@ This guide covers all breaking changes in Chester v2 and how to update your proj
 | Environment setup | `prepare_commands` list in YAML + hardcoded uv/conda logic | Per-backend `prepare.sh` scripts |
 | Package manager sync | `sync_on_launch`, `conda_env`, `conda_command` in YAML | Handled in your `prepare.sh` |
 | Per-experiment SLURM tuning | Not supported | `slurm_overrides` parameter |
-| EC2 / Autobot modes | Supported | Removed (pin `chester-ml<0.5` if needed) |
+| SLURM job tracking | `.done` marker only (can't detect failures) | `sacct`-based tracking (detects OOM, timeout, crashes) |
+| EC2 / Autobot modes | Supported | Removed (pin `chester-ml<1.0` if needed) |
 
 ## 1. Move Your Config File
 
