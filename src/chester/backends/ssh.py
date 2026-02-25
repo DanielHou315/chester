@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Optional
@@ -18,18 +19,8 @@ class SSHBackend(Backend):
     # ------------------------------------------------------------------
 
     def get_prepare_commands(self) -> List[str]:
-        """Return source command for prepare.sh, relative to remote_dir.
-
-        On the remote machine the prepare path should be resolved relative to
-        ``remote_dir`` (not the local ``project_path``).
-        """
-        if not self.config.prepare:
-            return []
-        prepare_path = self.config.prepare
-        remote_dir = self.config.remote_dir or ""
-        if not os.path.isabs(prepare_path):
-            prepare_path = os.path.join(remote_dir, prepare_path)
-        return [f"source {prepare_path}"]
+        """Return source command for prepare.sh, relative to remote_dir."""
+        return self._get_remote_prepare_commands()
 
     # ------------------------------------------------------------------
     # Script generation
@@ -145,7 +136,7 @@ class SSHBackend(Backend):
 
         # 1. Create remote log dir
         subprocess.run(
-            ["ssh", host, f"mkdir -p {log_dir}"],
+            ["ssh", host, f"mkdir -p {shlex.quote(log_dir)}"],
             check=True,
         )
 
@@ -165,10 +156,12 @@ class SSHBackend(Backend):
             )
 
             # 4. Execute via nohup and capture PID
+            q_script = shlex.quote(remote_script)
+            q_log = shlex.quote(f"{log_dir}/output.log")
             result = subprocess.run(
                 [
                     "ssh", host,
-                    f"nohup bash {remote_script} > {log_dir}/output.log 2>&1 & echo $!",
+                    f"nohup bash {q_script} > {q_log} 2>&1 & echo $!",
                 ],
                 capture_output=True,
                 text=True,
@@ -177,8 +170,9 @@ class SSHBackend(Backend):
             pid = int(result.stdout.strip())
 
             # 5. Save PID to .chester_pid
+            q_pid_file = shlex.quote(f"{log_dir}/.chester_pid")
             subprocess.run(
-                ["ssh", host, f"echo {pid} > {log_dir}/.chester_pid"],
+                ["ssh", host, f"echo {pid} > {q_pid_file}"],
                 check=True,
             )
 

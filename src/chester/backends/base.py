@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import os
+import shlex
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from typing import Any, Dict, List, Optional
@@ -184,21 +185,29 @@ class Backend(ABC):
         else:
             return base
 
+    def _get_remote_prepare_commands(self) -> List[str]:
+        """Resolve prepare.sh relative to remote_dir (for remote backends)."""
+        if not self.config.prepare:
+            return []
+        prepare_path = self.config.prepare
+        remote_dir = self.config.remote_dir or ""
+        if not os.path.isabs(prepare_path):
+            prepare_path = os.path.join(remote_dir, prepare_path)
+        return [f"source {prepare_path}"]
+
     def wrap_with_singularity(self, commands: List[str]) -> str:
         """Wrap a list of commands with singularity exec if configured."""
         sing = self.config.singularity
         if not sing:
-            # No singularity -- join commands with &&
             return " && ".join(commands)
 
-        mount_args = ""
-        if sing.mounts:
-            mount_args = " ".join(f"-B {m}" for m in sing.mounts)
-
-        gpu_flag = "--nv" if sing.gpu else ""
+        parts = ["singularity", "exec"]
+        for m in sing.mounts:
+            parts.extend(["-B", m])
+        if sing.gpu:
+            parts.append("--nv")
+        parts.append(sing.image)
 
         inner = " && ".join(commands)
-        return (
-            f"singularity exec {mount_args} {gpu_flag} "
-            f"{sing.image} /bin/bash -c '{inner}'"
-        ).strip()
+        parts.extend(["/bin/bash", "-c", shlex.quote(inner)])
+        return " ".join(parts)

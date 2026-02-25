@@ -17,13 +17,7 @@ class SlurmBackend(Backend):
 
     def get_prepare_commands(self) -> List[str]:
         """Return source command for prepare.sh, relative to remote_dir."""
-        if not self.config.prepare:
-            return []
-        prepare_path = self.config.prepare
-        remote_dir = self.config.remote_dir or ""
-        if not os.path.isabs(prepare_path):
-            prepare_path = os.path.join(remote_dir, prepare_path)
-        return [f"source {prepare_path}"]
+        return self._get_remote_prepare_commands()
 
     # ------------------------------------------------------------------
     # Script generation
