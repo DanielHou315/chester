@@ -113,11 +113,34 @@ def test_slurm_script_cds_to_remote_dir():
     assert "cd /home/user/myproject" in script
 
 
-def test_slurm_submit_raises_not_implemented():
+def test_slurm_submit_dry_prints_script(capsys):
+    """Dry run prints the script content without executing."""
     backend = _make_backend()
     task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
-    with pytest.raises(NotImplementedError, match="Round 3"):
-        backend.submit(task, script="dummy")
+    backend.submit(task, script_content="#!/bin/bash\necho hello", dry=True)
+    captured = capsys.readouterr()
+    assert "#!/bin/bash" in captured.out
+    assert "echo hello" in captured.out
+
+
+def test_slurm_submit_writes_local_script(tmp_path):
+    """Submit writes the script to a local file before SCP (even if sbatch fails)."""
+    import unittest.mock as mock
+    backend = _make_backend()
+    task = {
+        "params": {"lr": 0.01, "log_dir": "/remote/logs/exp1", "exp_name": "test"},
+        "_local_log_dir": str(tmp_path / "local_logs"),
+    }
+    script_content = "#!/bin/bash\necho hello\n"
+
+    # Mock subprocess.run to avoid real SSH/SCP
+    with mock.patch("chester.backends.slurm.subprocess.run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout="Submitted batch job 12345\n", stderr="")
+        backend.submit(task, script_content=script_content, dry=False)
+
+    local_script = tmp_path / "local_logs" / "chester_slurm.sh"
+    assert local_script.exists()
+    assert local_script.read_text() == script_content
 
 
 def test_slurm_script_wraps_python_for_uv():

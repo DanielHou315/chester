@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import shlex
+import subprocess
 from typing import Any, Dict, List, Optional
 
 from .base import Backend, BackendConfig, SlurmConfig
@@ -121,20 +123,71 @@ class SlurmBackend(Backend):
         return "\n".join(lines) + "\n"
 
     # ------------------------------------------------------------------
-    # Submission (deferred to Round 3)
+    # Submission
     # ------------------------------------------------------------------
 
     def submit(
         self,
         task: Dict[str, Any],
-        script: str,
+        script_content: str,
         dry: bool = False,
     ) -> None:
         """Submit a SLURM batch job.
 
-        Not yet implemented -- will be done in Round 3 with full
-        remote submission (ssh + sbatch) support.
+        Steps:
+        1. Write script locally to ``{local_log_dir}/chester_slurm.sh``
+        2. Create remote log directory via SSH
+        3. SCP the batch script to remote
+        4. SSH into the host and run ``sbatch``
+
+        Args:
+            task: Task dict.  ``params`` must contain ``log_dir`` (the
+                  *remote* log dir where the script will be placed).
+            script_content: The full SLURM batch script content.
+            dry: If True, print the script but do not submit.
         """
-        raise NotImplementedError(
-            "SlurmBackend.submit() is not yet implemented (Round 3)"
+        if dry:
+            print(script_content)
+            return
+
+        params = task.get("params", {})
+        log_dir = params.get("log_dir", "")
+        exp_name = params.get("exp_name", task.get("exp_name", "chester_job"))
+        host = self.config.host
+
+        # Determine local log dir for writing the script before SCP
+        local_log_dir = task.get("_local_log_dir", log_dir)
+
+        # 1. Write script locally
+        os.makedirs(local_log_dir, exist_ok=True)
+        local_script = os.path.join(local_log_dir, "chester_slurm.sh")
+        with open(local_script, "w") as f:
+            f.write(script_content)
+
+        # 2. Create remote log dir
+        subprocess.run(
+            ["ssh", host, f"mkdir -p {shlex.quote(log_dir)}"],
+            check=True,
         )
+
+        # 3. SCP script to remote
+        remote_script = os.path.join(log_dir, "chester_slurm.sh")
+        subprocess.run(
+            ["scp", local_script, f"{host}:{remote_script}"],
+            check=True,
+        )
+
+        # 4. Submit via sbatch
+        print(f"[chester] Submitting SLURM job on {host}: {exp_name}")
+        print(f"[chester] Remote script: {remote_script}")
+        result = subprocess.run(
+            ["ssh", host, f"sbatch {shlex.quote(remote_script)}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"[chester] sbatch failed: {result.stderr.strip()}")
+            raise RuntimeError(
+                f"sbatch failed on {host}: {result.stderr.strip()}"
+            )
+        print(f"[chester] {result.stdout.strip()}")
