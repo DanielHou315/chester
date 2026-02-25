@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """Live validation of SLURM job tracking against Great Lakes (gl).
 
-Run: cd /home/houhd/code/chester-overhaul/tests && uv run python test_slurm_live.py
+Run: cd /home/houhd/code/chester-overhaul/tests && uv run python live_slurm_validation.py
 
 This is NOT a pytest test — it requires real SSH access to gl.
+Not named test_* to avoid pytest auto-discovery.
 """
 import json
 import os
