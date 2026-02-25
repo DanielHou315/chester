@@ -143,6 +143,46 @@ def test_slurm_submit_writes_local_script(tmp_path):
     assert local_script.read_text() == script_content
 
 
+def test_slurm_submit_returns_job_id(tmp_path):
+    """submit() parses and returns the SLURM job ID from sbatch output."""
+    import unittest.mock as mock
+    backend = _make_backend()
+    task = {
+        "params": {"lr": 0.01, "log_dir": "/remote/logs/exp1", "exp_name": "test"},
+        "_local_log_dir": str(tmp_path / "local_logs"),
+    }
+    with mock.patch("chester.backends.slurm.subprocess.run") as mock_run:
+        mock_run.return_value = mock.Mock(
+            returncode=0, stdout="Submitted batch job 98765432\n", stderr=""
+        )
+        result = backend.submit(task, script_content="#!/bin/bash\necho hello\n", dry=False)
+    assert result == 98765432
+
+
+def test_slurm_submit_returns_none_on_dry_run():
+    """Dry run returns None without executing."""
+    backend = _make_backend()
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    result = backend.submit(task, script_content="#!/bin/bash\necho hello", dry=True)
+    assert result is None
+
+
+def test_slurm_submit_returns_none_when_job_id_unparseable(tmp_path):
+    """submit() returns None when sbatch output cannot be parsed."""
+    import unittest.mock as mock
+    backend = _make_backend()
+    task = {
+        "params": {"lr": 0.01, "log_dir": "/remote/logs/exp1", "exp_name": "test"},
+        "_local_log_dir": str(tmp_path / "local_logs"),
+    }
+    with mock.patch("chester.backends.slurm.subprocess.run") as mock_run:
+        mock_run.return_value = mock.Mock(
+            returncode=0, stdout="Some unexpected output\n", stderr=""
+        )
+        result = backend.submit(task, script_content="#!/bin/bash\necho hello\n", dry=False)
+    assert result is None
+
+
 def test_slurm_script_wraps_python_for_uv():
     backend = _make_backend(package_manager="uv")
     task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}

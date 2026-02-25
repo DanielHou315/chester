@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 from typing import Any, Dict, List, Optional
@@ -131,7 +132,7 @@ class SlurmBackend(Backend):
         task: Dict[str, Any],
         script_content: str,
         dry: bool = False,
-    ) -> None:
+    ) -> Optional[int]:
         """Submit a SLURM batch job.
 
         Steps:
@@ -148,7 +149,7 @@ class SlurmBackend(Backend):
         """
         if dry:
             print(script_content)
-            return
+            return None
 
         params = task.get("params", {})
         log_dir = params.get("log_dir", "")
@@ -191,3 +192,12 @@ class SlurmBackend(Backend):
                 f"sbatch failed on {host}: {result.stderr.strip()}"
             )
         print(f"[chester] {result.stdout.strip()}")
+
+        match = re.search(r"Submitted batch job (\d+)", result.stdout)
+        if match:
+            job_id = int(match.group(1))
+            print(f"[chester] SLURM job ID: {job_id}")
+            return job_id
+        else:
+            print(f"[chester] Warning: could not parse SLURM job ID from: {result.stdout.strip()}")
+            return None
