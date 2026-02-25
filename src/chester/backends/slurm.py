@@ -1,0 +1,146 @@
+"""SLURM batch execution backend."""
+from __future__ import annotations
+
+import os
+from typing import Any, Dict, List, Optional
+
+from .base import Backend, BackendConfig, SlurmConfig
+from ..utils import build_cli_args
+
+
+class SlurmBackend(Backend):
+    """Backend for SLURM cluster execution."""
+
+    # ------------------------------------------------------------------
+    # prepare.sh handling (same as SSH -- relative to remote_dir)
+    # ------------------------------------------------------------------
+
+    def get_prepare_commands(self) -> List[str]:
+        """Return source command for prepare.sh, relative to remote_dir."""
+        if not self.config.prepare:
+            return []
+        prepare_path = self.config.prepare
+        remote_dir = self.config.remote_dir or ""
+        if not os.path.isabs(prepare_path):
+            prepare_path = os.path.join(remote_dir, prepare_path)
+        return [f"source {prepare_path}"]
+
+    # ------------------------------------------------------------------
+    # Script generation
+    # ------------------------------------------------------------------
+
+    def generate_script(
+        self,
+        task: Dict[str, Any],
+        script: str,
+        python_command: str = "python",
+        env: Optional[Dict[str, str]] = None,
+        slurm_overrides: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Generate a SLURM batch script.
+
+        Structure:
+        1. SBATCH header from ``SlurmConfig.to_sbatch_header()``
+        2. ``#SBATCH -o / -e / --job-name`` directives
+        3. ``set -x``, ``set -u``, ``set -e``
+        4. ``srun hostname``
+        5. ``cd {remote_dir}``
+        6. ``module load`` for each module and cuda_module
+        7. Inner commands (prepare.sh + python + .done marker), optionally
+           wrapped with singularity
+
+        Args:
+            task: Task dict with ``params`` sub-dict.  ``params`` must contain
+                  ``log_dir`` for SBATCH output directives and ``.done`` marker.
+            script: Python script to run.
+            python_command: Base python command (default ``python``; for SLURM
+                  this is often ``srun python``).
+            env: Optional env vars.
+            slurm_overrides: Optional dict to override SLURM params per-experiment.
+
+        Returns:
+            Full SLURM batch script as a string.
+        """
+        params = task.get("params", {})
+        log_dir = params.get("log_dir", "")
+        exp_name = params.get("exp_name", task.get("exp_name", "chester_job"))
+        remote_dir = self.config.remote_dir or "./"
+
+        # ---- SBATCH header ----
+        slurm_cfg = self.config.slurm or SlurmConfig()
+        if slurm_overrides:
+            slurm_cfg = slurm_cfg.with_overrides(slurm_overrides)
+
+        header = slurm_cfg.to_sbatch_header()
+
+        lines: List[str] = []
+        lines.append(header)
+
+        # Per-job SBATCH directives
+        lines.append(f"#SBATCH -o {log_dir}/slurm.out")
+        lines.append(f"#SBATCH -e {log_dir}/slurm.err")
+        lines.append(f"#SBATCH --job-name={exp_name}")
+
+        # ---- Bash preamble ----
+        lines.append("set -x")
+        lines.append("set -u")
+        lines.append("set -e")
+        lines.append("srun hostname")
+        lines.append(f"cd {remote_dir}")
+
+        # ---- Module loads ----
+        for mod in self.config.modules:
+            lines.append(f"module load {mod}")
+        if self.config.cuda_module:
+            lines.append(f"module load {self.config.cuda_module}")
+
+        # ---- Inner commands (may be wrapped by singularity) ----
+        inner: List[str] = []
+
+        # Source prepare.sh
+        prepare_cmds = self.get_prepare_commands()
+        inner.extend(prepare_cmds)
+
+        # Python command
+        wrapped = self.get_python_command(python_command)
+        command = f"{wrapped} {script}"
+
+        if env:
+            for k, v in env.items():
+                command = f"{k}={v} " + command
+
+        cli_args = build_cli_args(params)
+        if cli_args:
+            command += "  " + cli_args
+
+        inner.append(command)
+
+        # .done marker
+        inner.append(f"touch {log_dir}/.done")
+
+        # Singularity wrapping or plain append
+        if self.config.singularity:
+            lines.append(self.wrap_with_singularity(inner))
+        else:
+            lines.extend(inner)
+
+        return "\n".join(lines) + "\n"
+
+    # ------------------------------------------------------------------
+    # Submission (deferred to Round 3)
+    # ------------------------------------------------------------------
+
+    def submit(
+        self,
+        task: Dict[str, Any],
+        script: str,
+        dry: bool = False,
+    ) -> None:
+        """Submit a SLURM batch job.
+
+        Not yet implemented -- will be done in Round 3 with full
+        remote submission (ssh + sbatch) support.
+        """
+        raise NotImplementedError(
+            "SlurmBackend.submit() is not yet implemented (Round 3)"
+        )

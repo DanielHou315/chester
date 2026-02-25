@@ -1,0 +1,127 @@
+# tests/test_backend_slurm.py
+import pytest
+
+from chester.backends.base import BackendConfig, SlurmConfig, SingularityConfig
+from chester.backends.slurm import SlurmBackend
+
+
+def _make_backend(package_manager="python", singularity=None, prepare=None,
+                  modules=None, cuda_module=None, host="gl",
+                  remote_dir="/home/user/project", slurm=None):
+    if slurm is None:
+        slurm = SlurmConfig(partition="spgpu", time="72:00:00", gpus=1)
+    config = BackendConfig(
+        name="gl",
+        type="slurm",
+        host=host,
+        remote_dir=remote_dir,
+        singularity=singularity,
+        prepare=prepare,
+        modules=modules or [],
+        cuda_module=cuda_module,
+        slurm=slurm,
+    )
+    project_config = {
+        "project_path": "/local/project",
+        "package_manager": package_manager,
+    }
+    return SlurmBackend(config, project_config)
+
+
+def test_slurm_script_has_sbatch_header():
+    backend = _make_backend()
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "#SBATCH --partition=spgpu" in script
+    assert "#SBATCH --time=72:00:00" in script
+    assert "#SBATCH --gpus=1" in script
+
+
+def test_slurm_script_with_overrides():
+    backend = _make_backend()
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(
+        task, script="train.py",
+        slurm_overrides={"time": "24:00:00", "gpus": 4},
+    )
+    # Overridden values
+    assert "#SBATCH --time=24:00:00" in script
+    assert "#SBATCH --gpus=4" in script
+    # Partition is NOT overridden, should keep default
+    assert "#SBATCH --partition=spgpu" in script
+
+
+def test_slurm_script_loads_modules():
+    backend = _make_backend(modules=["singularity", "python/3.10"], cuda_module="cuda/12.1.1")
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "module load singularity" in script
+    assert "module load python/3.10" in script
+    assert "module load cuda/12.1.1" in script
+
+
+def test_slurm_script_creates_done_marker():
+    backend = _make_backend()
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "touch /remote/logs/exp1/.done" in script
+
+
+def test_slurm_script_with_singularity():
+    sing = SingularityConfig(
+        image="/path/to/container.sif",
+        mounts=["/data:/data"],
+        gpu=True,
+    )
+    backend = _make_backend(singularity=sing)
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "singularity exec" in script
+    assert "-B /data:/data" in script
+    assert "--nv" in script
+    assert "/path/to/container.sif" in script
+
+
+def test_slurm_script_has_stdout_stderr_directives():
+    backend = _make_backend()
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "#SBATCH -o /remote/logs/exp1/slurm.out" in script
+    assert "#SBATCH -e /remote/logs/exp1/slurm.err" in script
+
+
+def test_slurm_script_has_set_flags():
+    backend = _make_backend()
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "set -x" in script
+    assert "set -u" in script
+    assert "set -e" in script
+
+
+def test_slurm_script_has_srun_hostname():
+    backend = _make_backend()
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "srun hostname" in script
+
+
+def test_slurm_script_cds_to_remote_dir():
+    backend = _make_backend(remote_dir="/home/user/myproject")
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "cd /home/user/myproject" in script
+
+
+def test_slurm_submit_raises_not_implemented():
+    backend = _make_backend()
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    with pytest.raises(NotImplementedError, match="Round 3"):
+        backend.submit(task, script="dummy")
+
+
+def test_slurm_script_wraps_python_for_uv():
+    backend = _make_backend(package_manager="uv")
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "uv run python" in script
