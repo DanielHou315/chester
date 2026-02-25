@@ -1,0 +1,95 @@
+# Chester v2 configuration for cotrain_dynamics project
+# Location: .chester/config.yaml (project root)
+
+log_dir: data
+package_manager: uv
+hydra_config_path: configs
+
+rsync_include:
+  - IsaacLabTactile/source
+  - IsaacLabTactile/source/extensions/omni.isaac.lab/omni/isaac/lab/utils/datasets
+  - third_party/curobo/.git
+  - third_party/pytorch3d/.git
+  - third_party/rl_games_cotrain/.git
+  - IsaacLabTactile/.git
+  - curobo/.git
+  - .git/
+  - .git/modules/
+  - .git/modules/third_party/
+  - .git/modules/third_party/curobo
+  - ".git/modules/third_party/curobo/**"
+
+rsync_exclude:
+  - IsaacLabTactile/_isaac_sim
+  - IsaacLabTactile/docker/cluster/exports
+  - .containers/
+  - containers/
+  - docker-isaac-sim/
+  - logs/
+  - outputs/
+  - data
+  - data_dh/
+  - datasets_dh/
+  - raw_datasets
+  - "*__pycache__*"
+  - .idea
+  - "*.mp4"
+  - ".git/**"
+  - wandb
+  - "out*"
+  - "*.so"
+  - third_party/pytorch3d/pytorch3d/*.so
+  - "third_party/pytorch3d/*egg-info*"
+  - third_party/pytorch3d/build/
+  - third_party/curobo/build/
+  - rsl_rl/rsl_rl.egg-info/
+  - "nohup*"
+  - .venv
+
+backends:
+  local:
+    type: local
+    prepare: .chester/backends/local/prepare.sh
+
+  gl:
+    type: slurm
+    host: gl
+    remote_dir: /home/houhd/code/cotrain_dynamics
+    prepare: .chester/backends/greatlakes/prepare.sh
+    modules: [singularity]
+    cuda_module: cuda/12.8.1
+    slurm:
+      partition: spgpu
+      time: "72:00:00"
+      nodes: 1
+      gpus: 1
+      cpus_per_gpu: 8
+      mem_per_gpu: 64G
+    singularity:
+      image: /home/houhd/code/cotrain_dynamics/.containers/full-latest.sif
+      mounts: [/usr/share/glvnd]
+      gpu: true
+
+  armdual:
+    type: ssh
+    host: armdual
+    remote_dir: /home/houhd/code/cotrain_dynamics
+    prepare: .chester/backends/ssh-server/prepare.sh
+
+  armlake:
+    type: ssh
+    host: armlake.local
+    remote_dir: /home/houhd/code/cotrain_dynamics
+    prepare: .chester/backends/ssh-server/prepare.sh
+
+  armfranka:
+    type: ssh
+    host: armfranka
+    remote_dir: /home/danielhou/code/cotrain_dynamics
+    prepare: .chester/backends/ssh-server/prepare.sh
+
+  armsky:
+    type: ssh
+    host: armsky
+    remote_dir: /home/danielhou/code/cotrain_dynamics
+    prepare: .chester/backends/ssh-server/prepare.sh
