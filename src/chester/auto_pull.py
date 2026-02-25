@@ -204,36 +204,38 @@ def check_slurm_job_status(host: str, slurm_job_id: int) -> str:
 
 
 def check_job_status(job: dict) -> str:
-    """
-    Check job status based on .done marker and process state.
+    """Check job status based on .done marker and process/SLURM state.
 
-    Returns:
-        'running': Job is still running
-        'done': Job completed successfully (.done exists, process exited)
-        'done_orphans': Job completed but processes still running
-        'failed': Process died without creating .done
+    For SLURM jobs (has 'slurm_job_id'): uses sacct for failure detection.
+    For SSH jobs: uses PID-based tracking.
+
+    Returns: 'running', 'done', 'done_orphans', or 'failed'
     """
     host = job['host']
     remote_log_dir = job['remote_log_dir']
-
     done = check_done_marker(host, remote_log_dir)
-    pid = get_remote_pid(host, remote_log_dir)
 
-    if pid is None:
-        # No PID file yet - job may not have started or is a legacy job
-        if done:
-            return 'done'
-        return 'running'
-
-    running = check_process_running(host, pid)
-
-    if done and not running:
+    if done:
+        slurm_job_id = job.get('slurm_job_id')
+        if slurm_job_id is None:
+            pid = get_remote_pid(host, remote_log_dir)
+            if pid is not None and check_process_running(host, pid):
+                return 'done_orphans'
         return 'done'
-    elif done and running:
-        return 'done_orphans'  # Script finished but processes still running
-    elif not done and not running:
-        return 'failed'  # Process died without creating .done
-    else:  # not done and running
+
+    slurm_job_id = job.get('slurm_job_id')
+    if slurm_job_id is not None:
+        slurm_status = check_slurm_job_status(host, slurm_job_id)
+        if slurm_status == 'failed':
+            return 'failed'
+        return 'running'
+    else:
+        pid = get_remote_pid(host, remote_log_dir)
+        if pid is None:
+            return 'running'
+        running = check_process_running(host, pid)
+        if not running:
+            return 'failed'
         return 'running'
 
 
