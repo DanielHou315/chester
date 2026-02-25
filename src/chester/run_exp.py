@@ -15,15 +15,17 @@ import time
 import datetime
 import dateutil.tz
 import json
-from . import config, config_ec2
-from .hydra_utils import to_hydra_command, run_hydra_command
-from .slurm import to_slurm_command, to_local_command, to_ssh_command
-from .utils_s3 import launch_ec2, s3_sync_code
+from . import config
 
 
 # Auto-pull manifest management
 _auto_pull_manifest_path = None
 _auto_pull_jobs = []
+
+# Deprecated modes that are no longer supported
+_DEPRECATED_MODES = frozenset({
+    "ec2", "autobot", "singularity", "local_singularity",
+})
 
 
 def _map_local_to_remote_log_dir(local_log_dir: str, mode: str) -> str:
@@ -111,10 +113,73 @@ def _resolve_extra_pull_dirs(extra_pull_dirs: list, mode: str) -> list:
     return result
 
 
+def _resolve_extra_pull_dirs_v2(extra_pull_dirs, project_path, remote_dir):
+    """Resolve extra_pull_dirs using the new config system (no old config module).
+
+    Args:
+        extra_pull_dirs: List of directory paths (strings)
+        project_path: Local project root path
+        remote_dir: Remote project root path
+
+    Returns:
+        List of dicts with 'local' and 'remote' keys
+    """
+    if not extra_pull_dirs:
+        return []
+
+    result = []
+    for path in extra_pull_dirs:
+        if os.path.isabs(path):
+            result.append({'local': path, 'remote': path})
+        else:
+            local_path = os.path.join(project_path, path)
+            remote_path = os.path.join(remote_dir, path)
+            result.append({'local': local_path, 'remote': remote_path})
+    return result
+
+
+def _map_local_to_remote_log_dir_v2(local_log_dir, project_path, remote_dir):
+    """Map local log_dir to remote using the new config system.
+
+    Args:
+        local_log_dir: Local log directory (absolute path, already resolved)
+        project_path: Local project root
+        remote_dir: Remote project root
+
+    Returns:
+        Remote log directory path
+
+    Raises:
+        ValueError: If local_log_dir is not within project_path
+    """
+    local_log_dir = os.path.normpath(local_log_dir)
+    project_path = os.path.normpath(project_path)
+
+    if not local_log_dir.startswith(project_path + os.sep) and local_log_dir != project_path:
+        raise ValueError(
+            f"log_dir must be within project_path for remote sync.\n"
+            f"  log_dir: {local_log_dir}\n"
+            f"  project_path: {project_path}\n"
+        )
+
+    relative_path = os.path.relpath(local_log_dir, project_path)
+    return os.path.join(remote_dir, relative_path)
+
+
 def _init_auto_pull_manifest(exp_prefix: str, mode: str):
     """Initialize the manifest file path for this batch of experiments."""
     global _auto_pull_manifest_path, _auto_pull_jobs
     manifest_dir = os.path.join(config.LOG_DIR, '.chester_manifests')
+    os.makedirs(manifest_dir, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime('%m%d_%H%M%S')
+    _auto_pull_manifest_path = os.path.join(manifest_dir, f'{exp_prefix}_{mode}_{timestamp}.json')
+    _auto_pull_jobs = []
+
+
+def _init_auto_pull_manifest_v2(exp_prefix, mode, log_dir):
+    """Initialize auto-pull manifest using the new config system."""
+    global _auto_pull_manifest_path, _auto_pull_jobs
+    manifest_dir = os.path.join(log_dir, '.chester_manifests')
     os.makedirs(manifest_dir, exist_ok=True)
     timestamp = datetime.datetime.now().strftime('%m%d_%H%M%S')
     _auto_pull_manifest_path = os.path.join(manifest_dir, f'{exp_prefix}_{mode}_{timestamp}.json')
@@ -158,7 +223,6 @@ def _save_and_spawn_auto_pull(dry: bool = False, poll_interval: int = 60):
         return
 
     # Spawn background poller
-    log_dir = os.path.join(config.LOG_DIR, '.chester_manifests')
     log_file = _auto_pull_manifest_path.replace('.json', '.log')
 
     # Run as module to support relative imports
@@ -175,12 +239,12 @@ def _save_and_spawn_auto_pull(dry: bool = False, poll_interval: int = 60):
 def monitor_processes(active_processes, max_processes=2, sleep_time=1):
     """
     Monitor the number of running processes and wait if maximum is reached.
-    
+
     Args:
         process_list: List of subprocess.Popen objects
         max_processes: Maximum number of concurrent processes
         sleep_time: Time to sleep between checks in seconds
-        
+
     Returns:
         Updated list with only running processes
     """
@@ -189,7 +253,7 @@ def monitor_processes(active_processes, max_processes=2, sleep_time=1):
         time.sleep(sleep_time)
         # Update the list of active processes
         active_processes = [p for p in active_processes if p.poll() is None]
-    
+
     return active_processes
 
 def query_yes_no(question, default="yes"):
@@ -439,6 +503,28 @@ def rsync_code(remote_host, remote_dir):
     os.system(cmd)
 
 
+def rsync_code_v2(remote_host, remote_dir, project_path, rsync_include, rsync_exclude):
+    """Sync project code to remote host using the new config system.
+
+    Args:
+        remote_host: SSH host identifier
+        remote_dir: Remote directory to sync to
+        project_path: Local project root path
+        rsync_include: List of include patterns
+        rsync_exclude: List of exclude patterns
+    """
+    print(f'[chester] rsync code: {project_path} -> {remote_host}:{remote_dir}')
+
+    if not rsync_include and not rsync_exclude:
+        raise ValueError("rsync_include and rsync_exclude must be defined in config")
+
+    include_args = ' '.join(f"--include='{p}'" for p in rsync_include)
+    exclude_args = ' '.join(f"--exclude='{p}'" for p in rsync_exclude)
+    cmd = f"rsync -avzh --delete {include_args} {exclude_args} {project_path}/ {remote_host}:{remote_dir}"
+    print(cmd)
+    os.system(cmd)
+
+
 exp_count = -2
 sub_process_popens = []
 now = datetime.datetime.now(dateutil.tz.tzlocal())
@@ -453,61 +539,125 @@ def run_experiment_lite(
         exp_name=None,
         log_dir=None,
         sub_dir='train',
-        script=None,  # TODO: change this before making pip package
+        script=None,
         python_command="python",
         mode="local",
         use_gpu=False,
         dry=False,
-        env={},
+        env=None,
         variant=None,
-        variations=[],
+        variations=None,
         use_cloudpickle=True,
         pre_commands=None,
         print_command=True,
         launch_with_subprocess=True,
         wait_subprocess=True,
         max_num_processes=10,
-        compile_script=None,
-        wait_compile=None,
-        use_singularity=False,
-        hydra_enabled=False,  # New parameter for Hydra support
-        hydra_flags=None,  # Additional hydra flags like multirun
-        auto_pull=False,  # Enable automatic result pulling from remote
-        auto_pull_interval=60,  # Poll interval in seconds for auto-pull
-        sync_env=None,  # Override sync_on_launch config (None = use config)
-        extra_pull_dirs=None,  # List of extra directories to pull (relative to PROJECT_PATH or absolute)
+        use_singularity=None,
+        slurm_overrides=None,
+        hydra_enabled=False,
+        hydra_flags=None,
+        auto_pull=False,
+        auto_pull_interval=60,
+        extra_pull_dirs=None,
+        sync_env=None,
+        git_snapshot=True,
         **kwargs):
     """
-    Serialize the stubbed method call and run the experiment using the specified mode.
-    :param stub_method_call: A stubbed method call.
-    :param script: The name of the entrance point python script
-    :param mode: Where & how to run the experiment. Can be ['local', 'singularity', 'seuss', 'psc']
-    :param dry: Whether to do a dry-run, which only prints the commands without executing them.
-    :param exp_prefix: Name prefix for the experiments
-    :param env: extra environment variables
-    :param kwargs: All other parameters will be passed directly to the entrance python script.
-    :param variant: If provided, should be a dictionary of parameters
-    :param hydra_enabled: If True, will use Hydra command line override format instead of chester format
-    :param hydra_flags: Optional dictionary of hydra flags to add to the command (e.g., {'multirun': True})
+    Serialize the stubbed method call and run the experiment using the
+    specified backend.
+
+    Uses the new backend system (.chester/config.yaml) for dispatch instead
+    of hardcoded mode lists.
+
+    Args:
+        stub_method_call: A stubbed method call to serialize and run.
+        batch_tasks: Pre-built list of tasks (advanced usage).
+        exp_prefix: Name prefix for the experiments.
+        exp_name: Explicit experiment name (auto-generated if None).
+        log_dir: Log directory (auto-generated if None).
+        sub_dir: Subdirectory under log_dir for organization.
+        script: Python script to run (defaults to chester.run_exp_worker).
+        python_command: Base python command.
+        mode: Backend name from .chester/config.yaml (or "local" default).
+        use_gpu: Whether to request GPU resources.
+        dry: If True, print commands without executing.
+        env: Extra environment variables (dict).
+        variant: Dictionary of variant parameters.
+        variations: List of variant keys used in experiment naming.
+        use_cloudpickle: Use cloudpickle for serialization.
+        pre_commands: Pre-execution commands.
+        print_command: Print the generated command/script.
+        launch_with_subprocess: Launch via subprocess (local only).
+        wait_subprocess: Wait for subprocess to complete (local only).
+        max_num_processes: Max concurrent local processes.
+        use_singularity: Override singularity setting (None=use backend default).
+        slurm_overrides: Dict of per-experiment SLURM parameter overrides.
+        hydra_enabled: Use Hydra command line format.
+        hydra_flags: Additional Hydra flags.
+        auto_pull: Enable automatic result pulling from remote.
+        auto_pull_interval: Poll interval in seconds for auto-pull.
+        extra_pull_dirs: Extra directories to pull from remote.
+        sync_env: Override sync_on_launch config.
+        git_snapshot: Save git state to log_dir before running (default True).
+        **kwargs: Additional parameters passed to the python script.
     """
+    # Fix mutable defaults
+    if env is None:
+        env = {}
+    if variations is None:
+        variations = []
+
+    # ----------------------------------------------------------------
+    # 1. Reject deprecated modes
+    # ----------------------------------------------------------------
+    if mode in _DEPRECATED_MODES:
+        raise ValueError(
+            f"Mode '{mode}' is deprecated. Use backend names from "
+            f".chester/config.yaml instead. "
+            f"For singularity, configure it on the backend."
+        )
+
+    # ----------------------------------------------------------------
+    # 2. Load config and create backend
+    # ----------------------------------------------------------------
+    from chester.config_v2 import load_config, get_backend
+    from chester.backends import create_backend
+
+    cfg = load_config()
+    backend_config = get_backend(mode, cfg)
+    backend = create_backend(backend_config, cfg)
+
+    project_path = cfg["project_path"]
+    cfg_log_dir = cfg["log_dir"]
+    is_remote = backend_config.type in ("ssh", "slurm")
+
+    # ----------------------------------------------------------------
+    # 3. Handle singularity override
+    # ----------------------------------------------------------------
+    if use_singularity is False:
+        backend.config.singularity = None
+    elif use_singularity is True and not backend.config.singularity:
+        raise ValueError(
+            f"use_singularity=True but backend '{mode}' has no singularity config"
+        )
+
+    # ----------------------------------------------------------------
+    # 4. Variant bookkeeping
+    # ----------------------------------------------------------------
     last_variant = variant.pop('chester_last_variant', False)
     first_variant = variant.pop('chester_first_variant', False)
-    host = config.HOST_ADDRESS[mode]
-    local_chester_queue_dir = config.LOG_DIR + '/queues'
-    remote_sub_dir = os.path.join(config.REMOTE_LOG_DIR[mode], sub_dir)
-    remote_batch_dir = os.path.join(remote_sub_dir, exp_prefix)
-    local_batch_dir = os.path.join(config.LOG_DIR, sub_dir, exp_prefix)
 
-    if first_variant:
-        os.system(f'mkdir -p {local_chester_queue_dir}')
-    if mode == 'singularity':
-        mode = 'local_singularity'
+    local_batch_dir = os.path.join(cfg_log_dir, sub_dir, exp_prefix)
 
+    # ----------------------------------------------------------------
+    # 5. Task preparation (same logic as original)
+    # ----------------------------------------------------------------
     assert stub_method_call is not None or batch_tasks is not None or script is not None, \
         "Must provide at least either stub_method_call or batch_tasks or script"
     if script is None:
         script = '-m chester.run_exp_worker'  # Use module syntax for installed package
-    
+
     if batch_tasks is None:
         batch_tasks = [
             dict(
@@ -535,7 +685,7 @@ def run_experiment_lite(
             data = base64.b64encode(pickle.dumps(call)).decode("utf-8")
         task["args_data"] = data
         exp_count += 1
-        
+
         if task.get("exp_name", None) is None:
             exp_name = exp_prefix
             for v in variations:
@@ -555,378 +705,193 @@ def run_experiment_lite(
                 exp_count = ind + 1
             task["exp_name"] = "{}_{}".format(exp_count, exp_name)
             print('exp name ', task["exp_name"])
+
         # Handle log_dir: user specifies local path, chester maps to remote
-        # Store original local log_dir for auto-pull, compute remote log_dir for execution
         local_log_dir = task.get("log_dir", None)
         if local_log_dir is None:
-            # Default: data/{sub_dir}/{exp_prefix}/{exp_name}
-            local_log_dir = os.path.join(config.LOG_DIR, sub_dir, exp_prefix, task["exp_name"])
+            local_log_dir = os.path.join(cfg_log_dir, sub_dir, exp_prefix, task["exp_name"])
         elif not os.path.isabs(local_log_dir):
-            # Relative path - resolve relative to PROJECT_PATH
-            local_log_dir = os.path.join(config.PROJECT_PATH, local_log_dir)
+            local_log_dir = os.path.join(project_path, local_log_dir)
         local_log_dir = os.path.normpath(local_log_dir)
-        task['_local_log_dir'] = local_log_dir  # Store for auto-pull
+        task['_local_log_dir'] = local_log_dir
 
-        # For remote modes, map local to remote; for local mode, use as-is
-        if mode in ["local", "local_singularity"]:
-            task['log_dir'] = local_log_dir
+        # For remote backends, map local to remote; for local, use as-is
+        if is_remote:
+            task['log_dir'] = _map_local_to_remote_log_dir_v2(
+                local_log_dir, project_path, backend_config.remote_dir
+            )
         else:
-            task['log_dir'] = _map_local_to_remote_log_dir(local_log_dir, mode)
+            task['log_dir'] = local_log_dir
 
         if task.get("variant", None) is not None:
             variant = task.pop("variant")
             if "exp_name" not in variant:
                 variant["exp_name"] = task["exp_name"]
-                # variant["group_name"] = exp_prefix
             task["variant_data"] = base64.b64encode(pickle.dumps(variant)).decode("utf-8")
         elif "variant" in task:
             del task["variant"]
         task["env"] = task.get("env", dict()) or dict()
-        local_exp_dir = os.path.join(local_batch_dir, task["exp_name"])
 
-    if mode not in ["local", "local_singularity", "ec2"] and not remote_confirmed and not dry:
+    # ----------------------------------------------------------------
+    # 6. Git snapshot (before any execution)
+    # ----------------------------------------------------------------
+    if git_snapshot and first_variant:
+        try:
+            from chester.git_snapshot import save_git_snapshot
+            first_log_dir = batch_tasks[0].get('_local_log_dir', local_batch_dir)
+            os.makedirs(first_log_dir, exist_ok=True)
+            save_git_snapshot(first_log_dir, repo_path=project_path)
+        except Exception as e:
+            print(f'[chester] Warning: git snapshot failed: {e}')
+
+    # ----------------------------------------------------------------
+    # 7. Confirm for remote (non-dry) runs
+    # ----------------------------------------------------------------
+    if is_remote and not remote_confirmed and not dry:
         remote_confirmed = query_yes_no(
             "Running in (non-dry) mode %s. Confirm?" % mode)
         if not remote_confirmed:
             sys.exit(1)
 
-    if mode in ["local"]:
-        for task in batch_tasks:
-            env = task.pop("env", None)
-            task.pop('_local_log_dir', None)  # Pop internal field, not for CLI
-            # Generate command based on whether hydra is enabled or not
-            if hydra_enabled:
-                command = to_hydra_command(
-                    params=task,
-                    python_command=python_command,
-                    script=script,
-                    hydra_flags=hydra_flags,
-                    env=env
-                )
-            else:
-                command = to_local_command(
-                    task,
-                    python_command=python_command,
-                    script=script,
-                    env=env
-                )
-                
+    # ----------------------------------------------------------------
+    # 8. Rsync code for remote backends (first variant only)
+    # ----------------------------------------------------------------
+    if is_remote and first_variant and not dry:
+        rsync_code_v2(
+            remote_host=backend_config.host,
+            remote_dir=backend_config.remote_dir,
+            project_path=project_path,
+            rsync_include=cfg.get("rsync_include", []),
+            rsync_exclude=cfg.get("rsync_exclude", []),
+        )
+
+    # ----------------------------------------------------------------
+    # 9. Initialize auto-pull manifest (first variant only)
+    # ----------------------------------------------------------------
+    if is_remote and first_variant and auto_pull:
+        _init_auto_pull_manifest_v2(exp_prefix, mode, cfg_log_dir)
+
+    # ----------------------------------------------------------------
+    # 10. Generate script and submit via backend
+    # ----------------------------------------------------------------
+    for task in batch_tasks:
+        task_env = task.pop("env", None)
+        local_log_dir = task.pop('_local_log_dir')
+        remote_log_dir = task.get('log_dir', '')
+
+        # Merge env: caller env + task env
+        merged_env = {}
+        if env:
+            merged_env.update(env)
+        if task_env:
+            merged_env.update(task_env)
+
+        # Build task dict for backend (params sub-dict)
+        backend_task = {
+            "params": {k: v for k, v in task.items()},
+            "exp_name": task.get("exp_name", exp_prefix),
+            "_local_log_dir": local_log_dir,
+        }
+
+        # Dispatch to backend
+        if backend_config.type == "local":
+            # Local backend: generate command and run directly
+            command = backend.generate_command(
+                backend_task,
+                script=script,
+                python_command=python_command,
+                env=merged_env or None,
+            )
+
             if print_command:
                 print(command)
             if dry:
                 return
-            
-            if env is None:
-                env = dict()
+
             if launch_with_subprocess:
                 try:
+                    run_env = dict(os.environ, **(merged_env or {}))
                     if wait_subprocess:
-                        subprocess.call(command, shell=True, env=dict(os.environ, **env))
+                        subprocess.call(command, shell=True, env=run_env)
                         popen_obj = None
                     else:
-                        popen_obj = subprocess.Popen(command, shell=True, env=dict(os.environ, **env))
+                        popen_obj = subprocess.Popen(command, shell=True, env=run_env)
                     sub_process_popens.append(popen_obj)
                 except Exception as e:
                     print(e)
                     if isinstance(e, KeyboardInterrupt):
                         raise
-            else: # for debug, not need to catch subprocess
+            else:
+                # For hydra debug mode
+                from .hydra_utils import run_hydra_command
                 assert hydra_enabled, "hydra_enabled must be True when launch_with_subprocess is False"
                 run_hydra_command(command, task["log_dir"], stub_method_call)
                 popen_obj = None
 
             return popen_obj
-    elif mode == 'local_singularity':
-        for task in batch_tasks:
-            env = task.pop("env", None)
-            task.pop('_local_log_dir', None)  # Pop internal field, not for CLI
-            command = to_local_command(
-                task,
-                python_command=python_command,
-                script=osp.join(config.PROJECT_PATH, script)
-            )
-            if print_command:
-                print(command)
-            if dry:
-                return
-            try:
-                if env is None:
-                    env = dict()
-                # TODO add argument for specifying container
-                singularity_header = f'singularity exec {config.SIMG_PATH[mode]}'
-                command = singularity_header + ' ' + command
-                subprocess.call(
-                    command, shell=True, env=dict(os.environ, **env))
-                popen_obj = None
-            except Exception as e:
-                print(e)
-                if isinstance(e, KeyboardInterrupt):
-                    raise
-            return popen_obj
-    elif mode in ['gl', 'seuss', 'psc', 'satori']:
-        for task in batch_tasks:
-            remote_dir = config.REMOTE_DIR[mode]
-            simg_dir = config.SIMG_PATH[mode]
-            if first_variant and not dry:
-                rsync_code(remote_host=host, remote_dir=remote_dir)
-            if first_variant and auto_pull:
-                _init_auto_pull_manifest(exp_prefix, mode)
-            remote_log_dir = task['log_dir']
-            local_log_dir = task.pop('_local_log_dir')  # Pop internal field, not for CLI
-            header = config.REMOTE_HEADER[mode]
-            header = header + "\n#SBATCH -o " + os.path.join(remote_log_dir, 'slurm.out') + " # STDOUT"
-            header = header + "\n#SBATCH -e " + os.path.join(remote_log_dir, 'slurm.err') + " # STDERR\n"
-            gpus = str(variant.get("gpus", 1))
-            header = header.replace("$gpus", gpus)
-            python_command = "srun " + python_command
-            command_list = to_slurm_command(
-                task,
-                use_gpu=use_gpu,
-                modules=config.MODULES[mode],
-                cuda_module=config.CUDA_MODULE[mode],
-                header=header,
-                python_command=python_command,
+
+        elif backend_config.type == "ssh":
+            script_content = backend.generate_script(
+                backend_task,
                 script=script,
-                use_singularity=use_singularity,
-                simg_dir=simg_dir,
-                remote_dir=remote_dir,
-                mount_options=config.REMOTE_MOUNT_OPTION[mode],
-                compile_script=compile_script,
-                wait_compile=wait_compile,
-                hydra_enabled=hydra_enabled,
-                hydra_flags=hydra_flags,
-                set_egl_gpu=False,
-                env=env
-            )
-            if print_command:
-                print("; ".join(command_list))
-            command = "\n".join(command_list)
-            os.system(f'mkdir -p {local_exp_dir}')
-            local_script_name = os.path.join(local_exp_dir, "slurm_launch")
-            with open(local_script_name, 'w') as f:
-                f.write(command)
-
-            # Add job to auto-pull manifest
-            if auto_pull:
-                _add_job_to_manifest(
-                    host=host,
-                    remote_log_dir=remote_log_dir,
-                    local_log_dir=local_log_dir,
-                    exp_name=task['exp_name'],
-                    extra_pull_dirs=_resolve_extra_pull_dirs(extra_pull_dirs, mode)
-                )
-
-            if last_variant:
-                print('Remote sub dir: ', remote_sub_dir)
-                os.system('scp -r {f1} {host}:{f2}'.format(f1=local_batch_dir, f2=remote_sub_dir, host=mode))
-                os.system(f'rm -rf {local_batch_dir}')
-                print('Ready to execute the scheduler')
-                remote_cmd = (f'cd {remote_dir} && . ./prepare.sh && '
-                              f'python chester/scheduler/remote_slurm_launcher.py {remote_batch_dir} {int(dry)}')
-                cmd = "ssh  {host} \'{cmd} \'".format(host=host,
-                                                      cmd=remote_cmd
-                                                      )
-                print('Submit to slurm ', cmd)
-                os.system(cmd)  # Launch
-
-                # Save manifest and spawn auto-pull poller
-                if auto_pull:
-                    _save_and_spawn_auto_pull(dry=dry, poll_interval=auto_pull_interval)
-            # Cleanup
-    elif mode in ['autobot']:
-        for task in batch_tasks:
-            # TODO check remote directory
-            remote_dir = config.REMOTE_DIR[mode]
-            simg_dir = config.SIMG_PATH[mode]
-
-            # query_yes_no('Confirm: Syncing code to {}:{}'.format(mode, remote_dir))
-            if first_variant:
-                rsync_code(remote_host=mode, remote_dir=remote_dir)
-            if first_variant and auto_pull:
-                _init_auto_pull_manifest(exp_prefix, mode)
-            remote_log_dir = task['log_dir']
-            local_log_dir = task.pop('_local_log_dir')  # Pop internal field, not for CLI
-            remote_script_name = os.path.join(remote_log_dir, task['exp_name'])
-            local_script_name = os.path.join(local_exp_dir, task['exp_name'])
-            header = '#CHESTERNODE ' + ','.join(config.AUTOBOT_NODELIST)
-            header = header + "\n#CHESTEROUT " + os.path.join(remote_log_dir, 'slurm.out')
-            header = header + "\n#CHESTERERR " + os.path.join(remote_log_dir, 'slurm.err')
-            header = header + "\n#CHESTERSCRIPT " + remote_script_name
-            if simg_dir.find('$') == -1:
-                simg_dir = osp.join(remote_dir, simg_dir)
-            command_list = to_slurm_command(
-                task,
-                use_gpu=use_gpu,
-                modules=config.MODULES[mode],
-                cuda_module=config.CUDA_MODULE[mode],
-                header=header,
                 python_command=python_command,
-                use_singularity=use_singularity,
-                script=osp.join(remote_dir, script),
-                simg_dir=simg_dir,
-                remote_dir=remote_dir,
-                mount_options=config.REMOTE_MOUNT_OPTION[mode],
-                compile_script=compile_script,
-                wait_compile=wait_compile,
-                set_egl_gpu=True,
-            )
-            if print_command:
-                print("; ".join(command_list))
-            command = "\n".join(command_list)
-            script_name = './data/tmp/' + task['exp_name']
-            scheduler_script_name = os.path.join(local_chester_queue_dir, task['exp_name'])
-            with open(script_name, 'w') as f:
-                f.write(command)
-            os.system(f'cp {script_name} {local_script_name}')
-            os.system(f'cp {script_name} {scheduler_script_name}')
-
-            # Add job to auto-pull manifest
-            if auto_pull:
-                _add_job_to_manifest(
-                    host=mode,
-                    remote_log_dir=remote_log_dir,
-                    local_log_dir=local_log_dir,
-                    exp_name=task['exp_name'],
-                    extra_pull_dirs=_resolve_extra_pull_dirs(extra_pull_dirs, mode)
-                )
-
-            # Cleanup
-            os.remove(script_name)
-            # Open scheduler if all jobs have been submitted
-            # Remote end will only open another scheduler when there is not one running already
-            # Redirect the output of the remote scheduler to the log file
-            if last_variant and not dry:
-                print('Syncing to remote')
-                print('Remote batch dir: ', remote_batch_dir)
-                os.system('scp -r {f1} {host}:{f2}'.format(f1=local_batch_dir, f2=remote_batch_dir, host=mode))
-                os.system('scp -r {f1} {host}:{f2}'.format(f1=local_chester_queue_dir, f2=config.CHESTER_QUEUE_DIR,
-                                                           host=mode))
-                os.system(f'rm -rf {local_batch_dir}')
-                os.system(f'rm -rf {local_chester_queue_dir}')
-                # os.system("ssh {host} \'{cmd}\'".format(host=mode, cmd='mkdir -p ' + config.CHESTER_CHEDULER_LOG_DIR))
-                t = datetime.datetime.now(dateutil.tz.tzlocal()).strftime('%m_%d_%H_%M')
-                # log_file = os.path.join(config.CHESTER_CHEDULER_LOG_DIR, f'{t}.txt')
-                log_file = os.path.join(config.CHESTER_CHEDULER_LOG_DIR, f'log_{t}.txt')
-                print('Ready to execute the scheduler')
-                cmd = "ssh  {host} \'{cmd} > {output}&\'".format(host=mode,
-                                                                 cmd=f'cd {remote_dir} && . ./prepare.sh && nohup python chester/scheduler/remote_scheduler.py',
-                                                                 output=log_file)
-                if dry:
-                    print(remote_script_name)
-                    print(cmd)
-                else:
-                    print(cmd)
-                    os.system(cmd)
-
-                # Save manifest and spawn auto-pull poller
-                if auto_pull:
-                    _save_and_spawn_auto_pull(dry=dry, poll_interval=auto_pull_interval)
-
-    elif mode in config.SSH_HOSTS:
-        # SSH-based remote execution (no SLURM)
-        # Package manager (uv/conda) determined by chester.yaml config
-        for task in batch_tasks:
-            remote_dir = config.REMOTE_DIR[mode]
-
-            if first_variant and not dry:
-                rsync_code(remote_host=host, remote_dir=remote_dir)
-            if first_variant and auto_pull:
-                _init_auto_pull_manifest(exp_prefix, mode)
-
-            remote_log_dir = task['log_dir']
-            local_log_dir = task.pop('_local_log_dir')  # Pop internal field, not for CLI
-
-            # Pop env from task dict to pass separately to to_ssh_command
-            task_env = task.pop("env", None)
-            if task_env:
-                # Merge with any env passed to run_experiment_lite
-                merged_env = {**env, **task_env} if env else task_env
-            else:
-                merged_env = env
-
-            # Generate SSH command script (python command wrapped by slurm.py based on config)
-            command_list = to_ssh_command(
-                task,
-                python_command=python_command,
-                remote_dir=remote_dir,
-                script=script,
-                env=merged_env,
-                hydra_enabled=hydra_enabled,
-                hydra_flags=hydra_flags,
-                sync_env=sync_env,
+                env=merged_env or None,
             )
 
             if print_command:
-                print("; ".join(command_list))
-
-            command = "\n".join(command_list)
+                print(script_content)
 
             # Save script locally
-            os.system(f'mkdir -p {local_exp_dir}')
+            local_exp_dir = os.path.join(local_batch_dir, task.get("exp_name", ""))
+            os.makedirs(local_exp_dir, exist_ok=True)
             local_script_name = os.path.join(local_exp_dir, "ssh_launch.sh")
             with open(local_script_name, 'w') as f:
-                f.write(command)
+                f.write(script_content)
 
             # Add job to auto-pull manifest
             if auto_pull:
                 _add_job_to_manifest(
-                    host=host,
+                    host=backend_config.host,
                     remote_log_dir=remote_log_dir,
                     local_log_dir=local_log_dir,
-                    exp_name=task['exp_name'],
-                    extra_pull_dirs=_resolve_extra_pull_dirs(extra_pull_dirs, mode)
+                    exp_name=task.get('exp_name', ''),
+                    extra_pull_dirs=_resolve_extra_pull_dirs_v2(
+                        extra_pull_dirs, project_path, backend_config.remote_dir
+                    ),
                 )
 
-            if not dry:
-                # Copy script to remote
-                remote_script_path = os.path.join(remote_log_dir, "ssh_launch.sh")
-                os.system(f'ssh {host} "mkdir -p {remote_log_dir}"')
-                os.system(f'scp {local_script_name} {host}:{remote_script_path}')
+            # Submit via backend
+            backend.submit(backend_task, script_content, dry=dry)
 
-                # Execute via SSH with nohup, save PID for tracking
-                stdout_log = os.path.join(remote_log_dir, 'stdout.log')
-                stderr_log = os.path.join(remote_log_dir, 'stderr.log')
-                pid_file = os.path.join(remote_log_dir, '.chester_pid')
-                ssh_cmd = (f'ssh {host} "cd {remote_dir} && '
-                           f'nohup bash {remote_script_path} > {stdout_log} 2> {stderr_log} & '
-                           f'echo \\$! > {pid_file}"')
+        elif backend_config.type == "slurm":
+            script_content = backend.generate_script(
+                backend_task,
+                script=script,
+                python_command=python_command,
+                env=merged_env or None,
+                slurm_overrides=slurm_overrides,
+            )
 
-                print(f'[chester] Launching on {host}: {task["exp_name"]}')
-                print(f'[chester] Remote log dir: {remote_log_dir}')
-                os.system(ssh_cmd)
+            if print_command:
+                print(script_content)
 
-        # Save manifest and spawn auto-pull poller (after all jobs submitted)
-        if last_variant and auto_pull:
-            _save_and_spawn_auto_pull(dry=dry, poll_interval=auto_pull_interval)
+            # Add job to auto-pull manifest
+            if auto_pull:
+                _add_job_to_manifest(
+                    host=backend_config.host,
+                    remote_log_dir=remote_log_dir,
+                    local_log_dir=local_log_dir,
+                    exp_name=task.get('exp_name', ''),
+                    extra_pull_dirs=_resolve_extra_pull_dirs_v2(
+                        extra_pull_dirs, project_path, backend_config.remote_dir
+                    ),
+                )
 
-    elif mode == 'ec2':
-        # if docker_image is None:
-        #     docker_image = config.DOCKER_IMAGE
-        s3_code_path = s3_sync_code(config_ec2, dry=dry)
-        for task in batch_tasks:
-            task["remote_log_dir"] = osp.join(config_ec2.AWS_S3_PATH, exp_prefix.replace("_", "-"), task["exp_name"])
-            if compile_script is None:
-                task["pre_commands"] = [". ./prepare_ec2.sh", 'time ./compile.sh']
-            else:
-                task["pre_commands"] = [". ./prepare_ec2.sh", 'time ./' + compile_script]
-        launch_ec2(batch_tasks,
-                   exp_prefix=exp_prefix,
-                   docker_image=None,  # Currently not using docker
-                   python_command=python_command,
-                   script=script,
-                   aws_config=None,
-                   dry=dry,
-                   terminate_machine=True,
-                   use_gpu=use_gpu,
-                   code_full_path=s3_code_path,
-                   sync_s3_pkl=True,
-                   sync_s3_html=True,
-                   sync_s3_png=True,
-                   sync_s3_log=True,
-                   sync_s3_gif=True,
-                   sync_s3_mp4=True,
-                   sync_s3_pth=True,
-                   sync_s3_txt=True,
-                   sync_log_on_termination=True,
-                   periodic_sync=True,
-                   periodic_sync_interval=15)
+            # Submit via backend
+            backend.submit(backend_task, script_content, dry=dry)
+
+    # ----------------------------------------------------------------
+    # 11. Spawn auto-pull poller (last variant only)
+    # ----------------------------------------------------------------
+    if is_remote and last_variant and auto_pull:
+        _save_and_spawn_auto_pull(dry=dry, poll_interval=auto_pull_interval)
