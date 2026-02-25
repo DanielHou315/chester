@@ -197,6 +197,11 @@ class SlurmBackend(Backend):
         if match:
             job_id = int(match.group(1))
             print(f"[chester] SLURM job ID: {job_id}")
+            job_id_file = os.path.join(log_dir, ".chester_slurm_job_id")
+            subprocess.run(
+                ["ssh", host, f"echo {job_id} > {shlex.quote(job_id_file)}"],
+                check=False,
+            )
             return job_id
         else:
             print(f"[chester] Warning: could not parse SLURM job ID from: {result.stdout.strip()}")

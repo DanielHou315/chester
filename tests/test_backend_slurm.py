@@ -183,6 +183,29 @@ def test_slurm_submit_returns_none_when_job_id_unparseable(tmp_path):
     assert result is None
 
 
+def test_slurm_submit_writes_job_id_to_remote(tmp_path):
+    """submit() writes the job ID to .chester_slurm_job_id on the remote host."""
+    import unittest.mock as mock
+    backend = _make_backend()
+    task = {
+        "params": {"lr": 0.01, "log_dir": "/remote/logs/exp1", "exp_name": "test"},
+        "_local_log_dir": str(tmp_path / "local_logs"),
+    }
+    with mock.patch("chester.backends.slurm.subprocess.run") as mock_run:
+        mock_run.return_value = mock.Mock(
+            returncode=0, stdout="Submitted batch job 98765432\n", stderr=""
+        )
+        backend.submit(task, script_content="#!/bin/bash\necho hello\n", dry=False)
+
+    # The 4th subprocess call (index 3) should write the job ID to remote
+    assert mock_run.call_count == 4
+    write_call = mock_run.call_args_list[3]
+    write_cmd = write_call[0][0]  # positional arg: the command list
+    assert "ssh" in write_cmd[0]
+    assert "98765432" in write_cmd[2]
+    assert ".chester_slurm_job_id" in write_cmd[2]
+
+
 def test_slurm_script_wraps_python_for_uv():
     backend = _make_backend(package_manager="uv")
     task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
