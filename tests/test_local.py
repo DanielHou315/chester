@@ -94,6 +94,7 @@ def test_local_command_generation():
 
 def test_slurm_command_generation():
     """Test SLURM command generation (dry run - no submission)."""
+    import warnings
     print("=" * 60)
     print("TEST: SLURM Command Generation")
     print("=" * 60)
@@ -112,21 +113,23 @@ def test_slurm_command_generation():
 #SBATCH --gres=gpu:1
 #SBATCH --time=1:00:00"""
 
-    cmd_list = to_slurm_command(
-        params=params,
-        use_gpu=True,
-        modules=['singularity'],
-        cuda_module='cuda/11.8',
-        header=header,
-        python_command='python',
-        script='train.py',
-        use_singularity=False,
-        simg_dir=None,
-        remote_dir='/home/user/project',
-        mount_options='',
-        set_egl_gpu=False,
-        env={},
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        cmd_list = to_slurm_command(
+            params=params,
+            use_gpu=True,
+            modules=['singularity'],
+            cuda_module='cuda/11.8',
+            header=header,
+            python_command='python',
+            script='train.py',
+            use_singularity=False,
+            simg_dir=None,
+            remote_dir='/home/user/project',
+            mount_options='',
+            set_egl_gpu=False,
+            env={},
+        )
 
     full_cmd = "\n".join(cmd_list)
     print(f"Generated SLURM script:\n{full_cmd[:500]}...\n")
@@ -178,6 +181,7 @@ def test_logger():
 
 def test_ssh_command_generation():
     """Test SSH command generation for non-SLURM hosts."""
+    import warnings
     print("=" * 60)
     print("TEST: SSH Command Generation")
     print("=" * 60)
@@ -190,13 +194,15 @@ def test_ssh_command_generation():
         'args_data': 'base64encodeddata',
     }
 
-    cmd_list = to_ssh_command(
-        params=params,
-        python_command='python',
-        remote_dir='/home/user/project',
-        script='train.py',
-        env={'CUDA_VISIBLE_DEVICES': '0'},
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        cmd_list = to_ssh_command(
+            params=params,
+            python_command='python',
+            remote_dir='/home/user/project',
+            script='train.py',
+            env={'CUDA_VISIBLE_DEVICES': '0'},
+        )
 
     full_cmd = "\n".join(cmd_list)
     print(f"Generated SSH script:\n{full_cmd}\n")

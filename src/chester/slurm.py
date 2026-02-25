@@ -1,5 +1,6 @@
 import os
 import os.path as osp
+import warnings
 from subprocess import run
 from tempfile import NamedTemporaryFile
 from . import config
@@ -14,12 +15,23 @@ def get_package_manager_setup_commands(sync=True, source_prepare=True):
     """
     Generate shell commands for package manager setup based on config.
 
+    .. deprecated::
+        Use the new backend system in .chester/config.yaml instead.
+        Backend classes handle package manager setup internally.
+
     Args:
         sync: Whether to sync/update the environment
         source_prepare: Whether to source prepare.sh for custom project setup
 
     Returns list of shell commands to set up the environment.
     """
+    warnings.warn(
+        "get_package_manager_setup_commands() is deprecated. "
+        "Use the new backend system (.chester/config.yaml) instead. "
+        "Backend classes handle package manager setup internally.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     pkg_manager = config.PACKAGE_MANAGER
     sync_on_launch = config.SYNC_ON_LAUNCH if sync else False
     commands = []
@@ -90,12 +102,23 @@ def get_python_command(base_command="python"):
     """
     Get the python command wrapped for the configured package manager.
 
+    .. deprecated::
+        Use the new backend system in .chester/config.yaml instead.
+        Backend.get_python_command() provides the same functionality.
+
     Args:
         base_command: Base python command (e.g., "python", "srun python")
 
     Returns:
         Wrapped command string (e.g., "uv run python", "conda run -n env python")
     """
+    warnings.warn(
+        "get_python_command() is deprecated. "
+        "Use the new backend system (.chester/config.yaml) instead. "
+        "Backend.get_python_command() provides the same functionality.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     pkg_manager = config.PACKAGE_MANAGER
 
     if pkg_manager == 'uv':
@@ -163,6 +186,10 @@ def to_slurm_command(params, header, python_command="srun python", remote_dir='~
     """
     Transfer the commands to the format that can be run by slurm.
 
+    .. deprecated::
+        Use the new backend system in .chester/config.yaml instead.
+        SlurmBackend.generate_script() provides the same functionality.
+
     Package manager (uv/conda) is determined by chester.yaml config.
 
     Args:
@@ -185,6 +212,13 @@ def to_slurm_command(params, header, python_command="srun python", remote_dir='~
         hydra_flags: Hydra flags
         sync_env: Override for sync_on_launch config (None = use config)
     """
+    warnings.warn(
+        "to_slurm_command() is deprecated. "
+        "Use the new backend system (.chester/config.yaml) with "
+        "SlurmBackend.generate_script() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     # Resolve default script path at runtime (not import time)
     if script is None:
         script = osp.join(config.PROJECT_PATH, 'scripts/run_experiment.py')
@@ -263,6 +297,10 @@ def to_ssh_command(params, python_command="python", remote_dir='./',
     """
     Generate a bash script for SSH-based remote execution (no SLURM).
 
+    .. deprecated::
+        Use the new backend system in .chester/config.yaml instead.
+        SSHBackend.generate_script() provides the same functionality.
+
     This creates a simpler script than to_slurm_command, suitable for
     running on remote machines via SSH + nohup.
 
@@ -278,6 +316,13 @@ def to_ssh_command(params, python_command="python", remote_dir='./',
         hydra_flags: Hydra flags if hydra_enabled
         sync_env: Override for sync_on_launch config (None = use config)
     """
+    warnings.warn(
+        "to_ssh_command() is deprecated. "
+        "Use the new backend system (.chester/config.yaml) with "
+        "SSHBackend.generate_script() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     command_list = []
 
     # Bash header
