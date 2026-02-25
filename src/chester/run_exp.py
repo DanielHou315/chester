@@ -186,10 +186,11 @@ def _init_auto_pull_manifest_v2(exp_prefix, mode, log_dir):
 
 
 def _add_job_to_manifest(host: str, remote_log_dir: str, local_log_dir: str,
-                         exp_name: str, extra_pull_dirs: list = None):
+                         exp_name: str, extra_pull_dirs: list = None,
+                         slurm_job_id: int = None):
     """Add a job to the auto-pull manifest."""
     global _auto_pull_jobs
-    _auto_pull_jobs.append({
+    entry = {
         'host': host,
         'remote_log_dir': remote_log_dir,
         'local_log_dir': local_log_dir,
@@ -198,7 +199,10 @@ def _add_job_to_manifest(host: str, remote_log_dir: str, local_log_dir: str,
         'pid_file': os.path.join(remote_log_dir, '.chester_pid'),
         'status': 'pending',
         'submitted_at': datetime.datetime.now().isoformat()
-    })
+    }
+    if slurm_job_id is not None:
+        entry['slurm_job_id'] = slurm_job_id
+    _auto_pull_jobs.append(entry)
 
 
 def _save_and_spawn_auto_pull(dry: bool = False, poll_interval: int = 60):
@@ -836,8 +840,12 @@ def run_experiment_lite(
                 with open(os.path.join(local_exp_dir, script_name), 'w') as f:
                     f.write(script_content)
 
+            # Submit via backend
+            submit_result = backend.submit(backend_task, script_content, dry=dry)
+
             # Add job to auto-pull manifest
             if auto_pull and not dry:
+                slurm_job_id = submit_result if backend_config.type == "slurm" else None
                 _add_job_to_manifest(
                     host=backend_config.host,
                     remote_log_dir=remote_log_dir,
@@ -846,10 +854,8 @@ def run_experiment_lite(
                     extra_pull_dirs=_resolve_extra_pull_dirs_v2(
                         extra_pull_dirs, project_path, backend_config.remote_dir
                     ),
+                    slurm_job_id=slurm_job_id,
                 )
-
-            # Submit via backend (backend.submit handles dry=True internally)
-            backend.submit(backend_task, script_content, dry=dry)
 
     # ----------------------------------------------------------------
     # 11. Spawn auto-pull poller (last variant only)

@@ -167,3 +167,47 @@ def test_resolve_extra_pull_dirs_v2_empty():
 
     assert _resolve_extra_pull_dirs_v2(None, "/p", "/r") == []
     assert _resolve_extra_pull_dirs_v2([], "/p", "/r") == []
+
+
+def test_add_job_to_manifest_includes_slurm_job_id():
+    """slurm_job_id is included in the manifest entry when provided."""
+    from chester.run_exp import _add_job_to_manifest, _auto_pull_jobs
+    import chester.run_exp as run_exp_mod
+
+    # Save and reset global state
+    old_jobs = run_exp_mod._auto_pull_jobs
+    run_exp_mod._auto_pull_jobs = []
+    try:
+        _add_job_to_manifest(
+            host="gl",
+            remote_log_dir="/remote/logs/exp1",
+            local_log_dir="/local/logs/exp1",
+            exp_name="test_exp",
+            slurm_job_id=12345678,
+        )
+        jobs = run_exp_mod._auto_pull_jobs
+        assert len(jobs) == 1
+        assert jobs[0]['slurm_job_id'] == 12345678
+    finally:
+        run_exp_mod._auto_pull_jobs = old_jobs
+
+
+def test_add_job_to_manifest_omits_slurm_job_id_when_none():
+    """slurm_job_id is not present in the manifest entry when not provided."""
+    from chester.run_exp import _add_job_to_manifest
+    import chester.run_exp as run_exp_mod
+
+    old_jobs = run_exp_mod._auto_pull_jobs
+    run_exp_mod._auto_pull_jobs = []
+    try:
+        _add_job_to_manifest(
+            host="gl",
+            remote_log_dir="/remote/logs/exp1",
+            local_log_dir="/local/logs/exp1",
+            exp_name="test_exp",
+        )
+        jobs = run_exp_mod._auto_pull_jobs
+        assert len(jobs) == 1
+        assert jobs[0].get('slurm_job_id') is None
+    finally:
+        run_exp_mod._auto_pull_jobs = old_jobs
