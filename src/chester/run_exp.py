@@ -516,13 +516,17 @@ def rsync_code_v2(remote_host, remote_dir, project_path, rsync_include, rsync_ex
     print(f'[chester] rsync code: {project_path} -> {remote_host}:{remote_dir}')
 
     if not rsync_include and not rsync_exclude:
-        raise ValueError("rsync_include and rsync_exclude must be defined in config")
+        print('[chester] Warning: no rsync_include/rsync_exclude defined, syncing entire project')
 
-    include_args = ' '.join(f"--include='{p}'" for p in rsync_include)
-    exclude_args = ' '.join(f"--exclude='{p}'" for p in rsync_exclude)
-    cmd = f"rsync -avzh --delete {include_args} {exclude_args} {project_path}/ {remote_host}:{remote_dir}"
-    print(cmd)
-    os.system(cmd)
+    cmd = ["rsync", "-avzh", "--delete"]
+    for p in (rsync_include or []):
+        cmd.append(f"--include={p}")
+    for p in (rsync_exclude or []):
+        cmd.append(f"--exclude={p}")
+    cmd.append(f"{project_path}/")
+    cmd.append(f"{remote_host}:{remote_dir}")
+    print(' '.join(cmd))
+    subprocess.run(cmd, check=True)
 
 
 exp_count = -2
@@ -830,26 +834,31 @@ def run_experiment_lite(
 
             return popen_obj
 
-        elif backend_config.type == "ssh":
-            script_content = backend.generate_script(
-                backend_task,
+        else:
+            # Remote backends (ssh, slurm) — unified dispatch
+            gen_kwargs = dict(
                 script=script,
                 python_command=python_command,
                 env=merged_env or None,
             )
+            if backend_config.type == "slurm" and slurm_overrides:
+                gen_kwargs["slurm_overrides"] = slurm_overrides
+
+            script_content = backend.generate_script(backend_task, **gen_kwargs)
 
             if print_command:
                 print(script_content)
 
-            # Save script locally
-            local_exp_dir = os.path.join(local_batch_dir, task.get("exp_name", ""))
-            os.makedirs(local_exp_dir, exist_ok=True)
-            local_script_name = os.path.join(local_exp_dir, "ssh_launch.sh")
-            with open(local_script_name, 'w') as f:
-                f.write(script_content)
+            if not dry:
+                # Save script locally for debugging
+                local_exp_dir = os.path.join(local_batch_dir, task.get("exp_name", ""))
+                os.makedirs(local_exp_dir, exist_ok=True)
+                script_name = "slurm_launch.sh" if backend_config.type == "slurm" else "ssh_launch.sh"
+                with open(os.path.join(local_exp_dir, script_name), 'w') as f:
+                    f.write(script_content)
 
             # Add job to auto-pull manifest
-            if auto_pull:
+            if auto_pull and not dry:
                 _add_job_to_manifest(
                     host=backend_config.host,
                     remote_log_dir=remote_log_dir,
@@ -860,34 +869,7 @@ def run_experiment_lite(
                     ),
                 )
 
-            # Submit via backend
-            backend.submit(backend_task, script_content, dry=dry)
-
-        elif backend_config.type == "slurm":
-            script_content = backend.generate_script(
-                backend_task,
-                script=script,
-                python_command=python_command,
-                env=merged_env or None,
-                slurm_overrides=slurm_overrides,
-            )
-
-            if print_command:
-                print(script_content)
-
-            # Add job to auto-pull manifest
-            if auto_pull:
-                _add_job_to_manifest(
-                    host=backend_config.host,
-                    remote_log_dir=remote_log_dir,
-                    local_log_dir=local_log_dir,
-                    exp_name=task.get('exp_name', ''),
-                    extra_pull_dirs=_resolve_extra_pull_dirs_v2(
-                        extra_pull_dirs, project_path, backend_config.remote_dir
-                    ),
-                )
-
-            # Submit via backend
+            # Submit via backend (backend.submit handles dry=True internally)
             backend.submit(backend_task, script_content, dry=dry)
 
     # ----------------------------------------------------------------
