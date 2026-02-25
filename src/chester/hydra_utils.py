@@ -5,12 +5,13 @@ Note: hydra-core is an optional dependency. Functions that require hydra
 will raise ImportError if hydra is not installed.
 """
 
+import base64
 import os
 import os.path as osp
-from typing import Dict, Any, List, Union, Callable
-from pathlib import Path
-import base64
 import pickle
+import shlex
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Union
 
 # Lazy imports for optional hydra dependency
 _hydra = None
@@ -45,6 +46,9 @@ def _format_hydra_value(value: Any) -> str:
     elif isinstance(value, (int, float)):
         return str(value)
     elif isinstance(value, str):
+        # Keep Hydra/OmegaConf interpolations unquoted (e.g., ${eval:'...'}).
+        if value.startswith("${") and value.endswith("}"):
+            return value
         # If it contains spaces, quote it
         if ' ' in value:
             return f'"{value}"'
@@ -137,7 +141,7 @@ def run_hydra_command(command: str, log_dir: str, stub_method_call: Callable):
     from . import config
     hydra, HydraConfig, read_write, open_dict = _require_hydra()
 
-    cmd_parts = command.split()
+    cmd_parts = shlex.split(command)
     # Find the index where the python module starts (after python command and potential -m flag)
     module_start_idx = 0
     for i, part in enumerate(cmd_parts):
