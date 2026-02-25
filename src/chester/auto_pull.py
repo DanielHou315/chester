@@ -160,6 +160,49 @@ def kill_process_tree(host: str, pid: int):
             print(f"[auto_pull] Failed to send SIGKILL: {e}")
 
 
+_SLURM_FAILED_STATES = frozenset({
+    "FAILED", "TIMEOUT", "OUT_OF_MEMORY", "CANCELLED", "NODE_FAIL",
+    "PREEMPTED", "BOOT_FAIL", "DEADLINE",
+})
+_SLURM_RUNNING_STATES = frozenset({
+    "RUNNING", "PENDING", "REQUEUED", "SUSPENDED", "CONFIGURING",
+})
+
+
+def check_slurm_job_status(host: str, slurm_job_id: int) -> str:
+    """Query SLURM job status via sacct.
+
+    Returns: 'completed', 'failed', 'running', or 'unknown'.
+    """
+    cmd = [
+        "ssh", host,
+        f"sacct -j {slurm_job_id} --format=State --noheader -P 2>/dev/null"
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30
+        )
+        lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
+        if not lines:
+            return "unknown"
+        state = lines[0].split()[0]  # Handle "CANCELLED by <uid>"
+        if state == "COMPLETED":
+            return "completed"
+        elif state in _SLURM_FAILED_STATES:
+            return "failed"
+        elif state in _SLURM_RUNNING_STATES:
+            return "running"
+        else:
+            print(f"[auto_pull] Unknown SLURM state '{state}' for job {slurm_job_id}")
+            return "unknown"
+    except subprocess.TimeoutExpired:
+        print(f"[auto_pull] SSH timeout querying sacct for job {slurm_job_id} on {host}")
+        return "unknown"
+    except Exception as e:
+        print(f"[auto_pull] Error querying sacct for job {slurm_job_id} on {host}: {e}")
+        return "unknown"
+
+
 def check_job_status(job: dict) -> str:
     """
     Check job status based on .done marker and process state.
