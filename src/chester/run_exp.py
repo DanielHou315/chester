@@ -797,7 +797,10 @@ def run_experiment_lite(
             if dry:
                 return
 
-            if launch_with_subprocess:
+            # Singularity wrapping always requires subprocess — in-process
+            # hydra execution cannot run inside a container.
+            use_subprocess = launch_with_subprocess or backend.config.singularity
+            if use_subprocess:
                 try:
                     run_env = dict(os.environ, **(merged_env or {}))
                     if wait_subprocess:
@@ -811,7 +814,7 @@ def run_experiment_lite(
                     if isinstance(e, KeyboardInterrupt):
                         raise
             else:
-                # For hydra debug mode
+                # For hydra debug mode (in-process, no singularity)
                 from .hydra_utils import run_hydra_command
                 assert hydra_enabled, "hydra_enabled must be True when launch_with_subprocess is False"
                 run_hydra_command(command, task["log_dir"], stub_method_call)
