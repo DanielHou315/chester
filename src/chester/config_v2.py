@@ -188,8 +188,22 @@ def load_config(search_from: Optional[Path] = None) -> Dict[str, Any]:
     config.setdefault("rsync_include", [])
     config.setdefault("rsync_exclude", [])
 
-    # Parse backends section
+    # Parse shared singularity defaults (if any)
+    shared_singularity = config.get("singularity")
+
+    # Parse backends section, merging shared singularity into each backend
     raw_backends = config.get("backends")
+    if shared_singularity and raw_backends:
+        for _name, raw in raw_backends.items():
+            if "singularity" not in raw:
+                # Backend has no singularity section — inherit shared
+                raw["singularity"] = dict(shared_singularity)
+            else:
+                # Backend has its own — merge shared as defaults
+                merged = dict(shared_singularity)
+                merged.update(raw["singularity"])
+                raw["singularity"] = merged
+
     backends = _parse_backends(raw_backends)
 
     # Create a default local backend if none defined
