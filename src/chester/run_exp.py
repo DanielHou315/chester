@@ -509,7 +509,10 @@ def rsync_code_v2(remote_host, remote_dir, project_path, rsync_include, rsync_ex
     cmd.append(f"{project_path}/")
     cmd.append(f"{remote_host}:{remote_dir}")
     print(' '.join(cmd))
-    subprocess.run(cmd, check=True)
+    result = subprocess.run(cmd)
+    # Exit code 24 = "some files vanished before transfer" — harmless race condition
+    if result.returncode not in (0, 24):
+        raise subprocess.CalledProcessError(result.returncode, cmd)
 
 
 exp_count = -2
