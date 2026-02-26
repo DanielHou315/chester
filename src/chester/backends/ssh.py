@@ -70,11 +70,15 @@ class SSHBackend(Backend):
         lines.append("set -e")
         lines.append(f"cd {remote_dir}")
 
-        # Build inner commands (may be wrapped by singularity)
+        # Backend prepare.sh always runs on the host.
+        prepare_cmds = self.get_prepare_commands()
+        lines.extend(prepare_cmds)
+
         inner: List[str] = []
 
-        prepare_cmds = self.get_prepare_commands()
-        inner.extend(prepare_cmds)
+        # Singularity has its own prepare that runs *inside* the container.
+        if self.config.singularity:
+            inner.extend(self.get_singularity_prepare_commands())
 
         command = self.build_python_command(
             params, script, python_command, env, hydra_enabled, hydra_flags,

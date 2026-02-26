@@ -38,7 +38,10 @@ class LocalBackend(Backend):
         )
 
         if self.config.singularity:
-            command = self.wrap_with_singularity([command])
+            inner: List[str] = []
+            inner.extend(self.get_singularity_prepare_commands())
+            inner.append(command)
+            command = self.wrap_with_singularity(inner)
 
         return command
 
@@ -53,7 +56,8 @@ class LocalBackend(Backend):
     ) -> str:
         """Generate a full bash script for local execution.
 
-        This is used when singularity or prepare.sh is involved.
+        When singularity is configured, the backend's own prepare.sh runs
+        on the host and the singularity prepare.sh runs inside the container.
 
         Args:
             task: Task dict with a ``params`` sub-dict.
@@ -72,8 +76,9 @@ class LocalBackend(Backend):
         lines.append("set -u")
         lines.append("set -e")
 
-        prepare_cmds = self.get_prepare_commands()
-        lines.extend(prepare_cmds)
+        if not self.config.singularity:
+            prepare_cmds = self.get_prepare_commands()
+            lines.extend(prepare_cmds)
 
         params = task.get("params", {})
         command = self.build_python_command(
@@ -81,9 +86,12 @@ class LocalBackend(Backend):
         )
 
         if self.config.singularity:
-            command = self.wrap_with_singularity([command])
-
-        lines.append(command)
+            inner: List[str] = []
+            inner.extend(self.get_singularity_prepare_commands())
+            inner.append(command)
+            lines.append(self.wrap_with_singularity(inner))
+        else:
+            lines.append(command)
 
         return "\n".join(lines) + "\n"
 

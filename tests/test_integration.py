@@ -131,8 +131,9 @@ def test_end_to_end_slurm_script_generation(tmp_path):
     assert "/opt/ml.sif" in script
     assert "--nv" in script
 
-    # Verify python command uses uv
-    assert "uv run python" in script
+    # Inside singularity, uv wrapping is skipped (container has its own venv)
+    assert "uv run python" not in script
+    assert "python train.py" in script
 
     # Verify .done marker
     assert "touch /remote/project/data/exp1/.done" in script

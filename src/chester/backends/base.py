@@ -19,6 +19,8 @@ class SingularityConfig:
     mounts: List[str] = field(default_factory=list)
     gpu: bool = False
     build_script: Optional[str] = None
+    workdir: Optional[str] = None
+    prepare: Optional[str] = None  # prepare script to source *inside* the container
 
 
 @dataclass
@@ -112,6 +114,8 @@ def parse_backend_config(name: str, raw: Dict[str, Any]) -> BackendConfig:
             mounts=sing_raw.get("mounts", []),
             gpu=sing_raw.get("gpu", False),
             build_script=sing_raw.get("build_script"),
+            workdir=sing_raw.get("workdir"),
+            prepare=sing_raw.get("prepare"),
         )
 
     # Parse SLURM config
@@ -178,7 +182,13 @@ class Backend(ABC):
         return [f"source {prepare_path}"]
 
     def get_python_command(self, base: str = "python") -> str:
-        """Wrap python command based on package manager."""
+        """Wrap python command based on package manager.
+
+        When singularity is active the container's own venv is on PATH,
+        so we skip the ``uv run`` wrapper.
+        """
+        if self.config.singularity:
+            return base
         pkg = self.project_config.get("package_manager", "python")
         if pkg == "uv":
             return f"uv run {base}"
@@ -246,18 +256,48 @@ class Backend(ABC):
 
         return command
 
+    def get_singularity_prepare_commands(self) -> List[str]:
+        """Return source command for the singularity-specific prepare script.
+
+        This runs *inside* the container, before the python command.
+        The path is resolved against ``workdir`` (container-side) if relative.
+        """
+        sing = self.config.singularity
+        if not sing or not sing.prepare:
+            return []
+        prepare_path = sing.prepare
+        if not os.path.isabs(prepare_path) and sing.workdir:
+            prepare_path = os.path.join(sing.workdir, prepare_path)
+        return [f"source {prepare_path}"]
+
     def wrap_with_singularity(self, commands: List[str]) -> str:
         """Wrap a list of commands with singularity exec if configured."""
         sing = self.config.singularity
         if not sing:
             return " && ".join(commands)
 
+        project_path = self.project_config.get("project_path", "")
+
         parts = ["singularity", "exec"]
         for m in sing.mounts:
-            parts.extend(["-B", m])
+            # Resolve relative mount sources against project root
+            if ":" in m:
+                src, dst = m.split(":", 1)
+                if not os.path.isabs(src):
+                    src = os.path.join(project_path, src)
+                parts.extend(["-B", f"{src}:{dst}"])
+            else:
+                parts.extend(["-B", m])
         if sing.gpu:
             parts.append("--nv")
-        parts.append(sing.image)
+        if sing.workdir:
+            parts.extend(["--pwd", sing.workdir])
+
+        # Resolve relative image path against project root
+        image = sing.image
+        if not os.path.isabs(image):
+            image = os.path.join(project_path, image)
+        parts.append(image)
 
         inner = " && ".join(commands)
         parts.extend(["/bin/bash", "-c", shlex.quote(inner)])
