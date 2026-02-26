@@ -82,6 +82,9 @@ class SlurmBackend(Backend):
         lines.append(f"#SBATCH --job-name={exp_name}")
 
         # ---- Bash preamble ----
+        # Redirect xtrace to a separate file so slurm.err stays clean
+        lines.append(f"exec 19>{log_dir}/chester_xtrace.log")
+        lines.append("BASH_XTRACEFD=19")
         lines.append("set -x")
         lines.append("set -u")
         lines.append("set -e")

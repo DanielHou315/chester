@@ -65,6 +65,9 @@ class SSHBackend(Backend):
 
         lines: List[str] = []
         lines.append("#!/usr/bin/env bash")
+        # Redirect xtrace to a separate file so output.log stays clean
+        lines.append(f"exec 19>{log_dir}/chester_xtrace.log")
+        lines.append("BASH_XTRACEFD=19")
         lines.append("set -x")
         lines.append("set -u")
         lines.append("set -e")
