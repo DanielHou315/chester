@@ -21,6 +21,7 @@ class SingularityConfig:
     build_script: Optional[str] = None
     workdir: Optional[str] = None
     prepare: Optional[str] = None  # prepare script to source *inside* the container
+    enabled: bool = True  # when False, config is present but not used by default
 
 
 @dataclass
@@ -116,6 +117,7 @@ def parse_backend_config(name: str, raw: Dict[str, Any]) -> BackendConfig:
             build_script=sing_raw.get("build_script"),
             workdir=sing_raw.get("workdir"),
             prepare=sing_raw.get("prepare"),
+            enabled=sing_raw.get("enabled", True),
         )
 
     # Parse SLURM config

@@ -624,10 +624,17 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     if use_singularity is False:
         backend.config.singularity = None
-    elif use_singularity is True and not backend.config.singularity:
-        raise ValueError(
-            f"use_singularity=True but backend '{mode}' has no singularity config"
-        )
+    elif use_singularity is True:
+        if not backend.config.singularity:
+            raise ValueError(
+                f"use_singularity=True but backend '{mode}' has no singularity config"
+            )
+        # Force enable even if config says enabled: false
+        backend.config.singularity.enabled = True
+    elif use_singularity is None and backend.config.singularity:
+        # Default: respect the enabled flag in config
+        if not backend.config.singularity.enabled:
+            backend.config.singularity = None
 
     # ----------------------------------------------------------------
     # 4. Variant bookkeeping
