@@ -206,6 +206,23 @@ def test_slurm_submit_writes_job_id_to_remote(tmp_path):
     assert ".chester_slurm_job_id" in write_cmd[2]
 
 
+def test_slurm_script_with_overlay():
+    sing = SingularityConfig(
+        image="/path/to/container.sif",
+        gpu=True,
+        overlay="/data/overlay.img",
+        overlay_size=8192,
+    )
+    backend = _make_backend(singularity=sing)
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    # Overlay creation guard before singularity exec
+    assert 'if [ ! -f /data/overlay.img ]' in script
+    assert "singularity overlay create --size 8192 /data/overlay.img" in script
+    # Singularity exec includes --overlay
+    assert "--overlay /data/overlay.img" in script
+
+
 def test_slurm_script_wraps_python_for_uv():
     backend = _make_backend(package_manager="uv")
     task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}

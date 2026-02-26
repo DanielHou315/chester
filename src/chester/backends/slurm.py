@@ -99,6 +99,9 @@ class SlurmBackend(Backend):
         prepare_cmds = self.get_prepare_commands()
         lines.extend(prepare_cmds)
 
+        # Create overlay image if needed (before singularity exec).
+        lines.extend(self.get_overlay_setup_commands())
+
         inner: List[str] = []
 
         # Singularity has its own prepare that runs *inside* the container.

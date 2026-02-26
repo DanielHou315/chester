@@ -22,6 +22,9 @@ class SingularityConfig:
     workdir: Optional[str] = None
     prepare: Optional[str] = None  # prepare script to source *inside* the container
     enabled: bool = True  # when False, config is present but not used by default
+    writable_tmpfs: bool = False  # --writable-tmpfs: allow writes via in-memory overlay
+    overlay: Optional[str] = None  # path to persistent ext3 overlay image
+    overlay_size: int = 10240  # overlay size in MB (default 10 GB)
 
 
 @dataclass
@@ -132,6 +135,9 @@ def parse_backend_config(name: str, raw: Dict[str, Any]) -> BackendConfig:
             workdir=sing_raw.get("workdir"),
             prepare=sing_raw.get("prepare"),
             enabled=sing_raw.get("enabled", True),
+            writable_tmpfs=sing_raw.get("writable_tmpfs", False),
+            overlay=sing_raw.get("overlay"),
+            overlay_size=sing_raw.get("overlay_size", 10240),
         )
 
     # Parse SLURM config
@@ -288,6 +294,28 @@ class Backend(ABC):
             prepare_path = os.path.join(sing.workdir, prepare_path)
         return [f"source {prepare_path}"]
 
+    def get_overlay_setup_commands(self) -> List[str]:
+        """Return shell commands to create the overlay image if it doesn't exist.
+
+        The overlay file is created lazily on first use.  Commands are
+        returned as separate lines for inclusion in bash scripts.
+        """
+        sing = self.config.singularity
+        if not sing or not sing.overlay:
+            return []
+        overlay = sing.overlay
+        project_path = self.project_config.get("project_path", "")
+        if not os.path.isabs(overlay):
+            overlay = os.path.join(project_path, overlay)
+        size = sing.overlay_size
+        return [
+            f"if [ ! -f {overlay} ]; then",
+            f'  echo "[chester] Creating singularity overlay ({size} MB): {overlay}"',
+            f'  mkdir -p "$(dirname {overlay})"',
+            f"  singularity overlay create --size {size} {overlay}",
+            f"fi",
+        ]
+
     def wrap_with_singularity(self, commands: List[str]) -> str:
         """Wrap a list of commands with singularity exec if configured."""
         sing = self.config.singularity
@@ -308,6 +336,14 @@ class Backend(ABC):
                 parts.extend(["-B", m])
         if sing.gpu:
             parts.append("--nv")
+        if sing.writable_tmpfs:
+            parts.append("--writable-tmpfs")
+        # Persistent ext3 overlay
+        if sing.overlay:
+            overlay = sing.overlay
+            if not os.path.isabs(overlay):
+                overlay = os.path.join(project_path, overlay)
+            parts.extend(["--overlay", overlay])
         if sing.workdir:
             parts.extend(["--pwd", sing.workdir])
 

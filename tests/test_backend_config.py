@@ -96,6 +96,36 @@ def test_ssh_missing_host():
         parse_backend_config("srv", {"type": "ssh"})
 
 
+def test_parse_singularity_overlay():
+    raw = {
+        "type": "ssh",
+        "host": "myserver",
+        "remote_dir": "/home/user/project",
+        "singularity": {
+            "image": "/path/to/container.sif",
+            "overlay": ".containers/overlay.img",
+            "overlay_size": 5120,
+        },
+    }
+    cfg = parse_backend_config("myserver", raw)
+    assert cfg.singularity.overlay == ".containers/overlay.img"
+    assert cfg.singularity.overlay_size == 5120
+
+
+def test_parse_singularity_overlay_defaults():
+    raw = {
+        "type": "ssh",
+        "host": "myserver",
+        "remote_dir": "/home/user/project",
+        "singularity": {
+            "image": "/path/to/container.sif",
+        },
+    }
+    cfg = parse_backend_config("myserver", raw)
+    assert cfg.singularity.overlay is None
+    assert cfg.singularity.overlay_size == 10240
+
+
 def test_slurm_generates_header():
     slurm = SlurmConfig(
         partition="spgpu",

@@ -78,6 +78,49 @@ def test_ssh_script_with_prepare():
     assert "source /home/user/project/.chester/backends/myserver/prepare.sh" in script
 
 
+def test_ssh_script_with_overlay():
+    sing = SingularityConfig(
+        image="/path/to/container.sif",
+        gpu=True,
+        overlay="/data/overlay.img",
+        overlay_size=5120,
+    )
+    backend = _make_backend(singularity=sing)
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    # Overlay creation guard should appear before singularity exec
+    assert 'if [ ! -f /data/overlay.img ]' in script
+    assert "singularity overlay create --size 5120 /data/overlay.img" in script
+    # Singularity exec should use --overlay
+    assert "--overlay /data/overlay.img" in script
+
+
+def test_ssh_script_with_relative_overlay():
+    sing = SingularityConfig(
+        image="/path/to/container.sif",
+        gpu=True,
+        overlay=".containers/overlay.img",
+    )
+    backend = _make_backend(singularity=sing)
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    # Relative overlay path resolved against project_path
+    assert "--overlay /local/project/.containers/overlay.img" in script
+    assert "singularity overlay create --size 10240 /local/project/.containers/overlay.img" in script
+
+
+def test_ssh_script_no_overlay_without_config():
+    sing = SingularityConfig(
+        image="/path/to/container.sif",
+        gpu=True,
+    )
+    backend = _make_backend(singularity=sing)
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "--overlay" not in script
+    assert "overlay create" not in script
+
+
 def test_ssh_script_contains_command_with_params():
     backend = _make_backend()
     task = {"params": {"lr": 0.01, "batch_size": 64, "log_dir": "/remote/logs/exp1"}}

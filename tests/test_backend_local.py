@@ -104,6 +104,37 @@ def test_generate_script_has_shebang():
     assert script.startswith("#!/usr/bin/env bash")
 
 
+def test_local_script_with_overlay():
+    sing = SingularityConfig(
+        image="/path/to/container.sif",
+        gpu=True,
+        overlay=".containers/overlay.img",
+        overlay_size=5120,
+    )
+    backend = _make_backend(singularity=sing)
+    task = {"params": {"lr": 0.01}}
+    script = backend.generate_script(task, script="train.py")
+    # Overlay creation guard
+    assert "if [ ! -f /tmp/myproject/.containers/overlay.img ]" in script
+    assert "singularity overlay create --size 5120 /tmp/myproject/.containers/overlay.img" in script
+    # Singularity exec includes --overlay
+    assert "--overlay /tmp/myproject/.containers/overlay.img" in script
+
+
+def test_local_command_with_overlay():
+    sing = SingularityConfig(
+        image="/path/to/container.sif",
+        gpu=True,
+        overlay="/data/overlay.img",
+    )
+    backend = _make_backend(singularity=sing)
+    task = {"params": {"lr": 0.01}}
+    cmd = backend.generate_command(task, script="train.py")
+    # Overlay creation guard in command string
+    assert "if [ ! -f /data/overlay.img ]" in cmd
+    assert "--overlay /data/overlay.img" in cmd
+
+
 def test_submit_dry_returns_none():
     backend = _make_backend()
     task = {"params": {"lr": 0.01}}

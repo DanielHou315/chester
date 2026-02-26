@@ -40,6 +40,11 @@ class LocalBackend(Backend):
         # Host prepare always runs on the host (e.g. direnv, module loads).
         host_parts: List[str] = list(self.get_prepare_commands())
 
+        # Create overlay image if needed (before singularity exec).
+        overlay_cmds = self.get_overlay_setup_commands()
+        if overlay_cmds:
+            host_parts.append("\n".join(overlay_cmds))
+
         if self.config.singularity:
             inner: List[str] = []
             inner.extend(self.get_singularity_prepare_commands())
@@ -83,6 +88,9 @@ class LocalBackend(Backend):
 
         # Host prepare always runs on the host (e.g. direnv, module loads).
         lines.extend(self.get_prepare_commands())
+
+        # Create overlay image if needed (before singularity exec).
+        lines.extend(self.get_overlay_setup_commands())
 
         params = task.get("params", {})
         command = self.build_python_command(
