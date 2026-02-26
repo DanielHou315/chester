@@ -331,7 +331,8 @@ class Backend(ABC):
             # Resolve relative mount sources against project root
             if ":" in m:
                 src, dst = m.split(":", 1)
-                if not os.path.isabs(src):
+                # Leave ~ and $ prefixed paths for bash expansion at runtime
+                if not os.path.isabs(src) and not src.startswith(("~", "$")):
                     src = os.path.join(project_path, src)
                 parts.extend(["-B", f"{src}:{dst}"])
             else:

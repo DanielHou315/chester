@@ -754,11 +754,7 @@ def run_experiment_lite(
     # 8. Rsync code for remote backends (first variant only)
     # ----------------------------------------------------------------
     if is_remote and first_variant and not dry:
-        # Auto-exclude singularity overlay images so each host keeps its own.
         rsync_exclude = list(cfg.get("rsync_exclude", []))
-        for _name, bc in cfg.get("backends", {}).items():
-            if bc.singularity and bc.singularity.overlay:
-                rsync_exclude.append(bc.singularity.overlay)
         rsync_code_v2(
             remote_host=backend_config.host,
             remote_dir=backend_config.remote_dir,

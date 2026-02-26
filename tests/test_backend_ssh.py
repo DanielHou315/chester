@@ -137,6 +137,34 @@ def test_ssh_script_no_overlay_without_config():
     assert "overlay create" not in script
 
 
+def test_ssh_script_tilde_mount_not_resolved():
+    """Tilde-prefixed mount sources should be left as-is for bash expansion."""
+    sing = SingularityConfig(
+        image="/path/to/container.sif",
+        gpu=True,
+        mounts=["~/.isaac-cache/kit-data:/opt/isaac-sim/kit/data"],
+    )
+    backend = _make_backend(singularity=sing)
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "-B ~/.isaac-cache/kit-data:/opt/isaac-sim/kit/data" in script
+    # Should NOT be resolved against project_path
+    assert "/local/project/~" not in script
+
+
+def test_ssh_script_env_var_mount_not_resolved():
+    """$HOME-prefixed mount sources should be left as-is for bash expansion."""
+    sing = SingularityConfig(
+        image="/path/to/container.sif",
+        mounts=["$HOME/.cache:/opt/cache"],
+    )
+    backend = _make_backend(singularity=sing)
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "-B $HOME/.cache:/opt/cache" in script
+    assert "/local/project/$HOME" not in script
+
+
 def test_ssh_script_contains_command_with_params():
     backend = _make_backend()
     task = {"params": {"lr": 0.01, "batch_size": 64, "log_dir": "/remote/logs/exp1"}}
