@@ -109,6 +109,22 @@ def test_ssh_script_with_relative_overlay():
     assert "singularity overlay create --size 10240 /local/project/.containers/overlay.img" in script
 
 
+def test_ssh_script_with_fakeroot():
+    sing = SingularityConfig(
+        image="/path/to/container.sif",
+        gpu=True,
+        fakeroot=True,
+    )
+    backend = _make_backend(singularity=sing)
+    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "--fakeroot" in script
+    # fakeroot should come before --nv
+    fakeroot_pos = script.index("--fakeroot")
+    nv_pos = script.index("--nv")
+    assert fakeroot_pos < nv_pos
+
+
 def test_ssh_script_no_overlay_without_config():
     sing = SingularityConfig(
         image="/path/to/container.sif",
