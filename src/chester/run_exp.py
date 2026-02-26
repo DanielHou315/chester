@@ -552,6 +552,7 @@ def run_experiment_lite(
         extra_pull_dirs=None,
         sync_env=None,
         git_snapshot=True,
+        confirm=False,
         **kwargs):
     """
     Serialize the stubbed method call and run the experiment using the
@@ -744,7 +745,7 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     # 7. Confirm for remote (non-dry) runs
     # ----------------------------------------------------------------
-    if is_remote and not remote_confirmed and not dry:
+    if is_remote and not remote_confirmed and not dry and not confirm:
         remote_confirmed = query_yes_no(
             "Running in (non-dry) mode %s. Confirm?" % mode)
         if not remote_confirmed:
