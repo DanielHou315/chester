@@ -25,7 +25,7 @@ class SingularityConfig:
     writable_tmpfs: bool = False  # --writable-tmpfs: allow writes via in-memory overlay
     overlay: Optional[str] = None  # path to persistent ext3 overlay image
     overlay_size: int = 10240  # overlay size in MB (default 10 GB)
-    fakeroot: bool = False  # --fakeroot: run as fake root inside the container
+    fakeroot: bool = True  # --fakeroot: run as fake root inside the container
 
 
 @dataclass
@@ -139,7 +139,7 @@ def parse_backend_config(name: str, raw: Dict[str, Any]) -> BackendConfig:
             writable_tmpfs=sing_raw.get("writable_tmpfs", False),
             overlay=sing_raw.get("overlay"),
             overlay_size=sing_raw.get("overlay_size", 10240),
-            fakeroot=sing_raw.get("fakeroot", False),
+            fakeroot=sing_raw.get("fakeroot", True),
         )
 
     # Parse SLURM config
