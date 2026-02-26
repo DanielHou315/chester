@@ -819,10 +819,12 @@ def run_experiment_lite(
                 try:
                     run_env = dict(os.environ, **(merged_env or {}))
                     if wait_subprocess:
-                        subprocess.call(command, shell=True, env=run_env)
+                        subprocess.call(command, shell=True, env=run_env,
+                                        executable="/bin/bash")
                         popen_obj = None
                     else:
-                        popen_obj = subprocess.Popen(command, shell=True, env=run_env)
+                        popen_obj = subprocess.Popen(command, shell=True, env=run_env,
+                                                     executable="/bin/bash")
                     sub_process_popens.append(popen_obj)
                 except Exception as e:
                     print(e)
