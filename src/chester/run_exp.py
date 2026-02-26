@@ -481,7 +481,7 @@ def rsync_code(remote_host, remote_dir):
 
     include_args = ' '.join(f"--include='{p}'" for p in yaml_include)
     exclude_args = ' '.join(f"--exclude='{p}'" for p in yaml_exclude)
-    cmd = f"rsync -avzh --progress --delete {include_args} {exclude_args} {project_path}/ {remote_host}:{remote_dir}"
+    cmd = f"rsync -avzhK --info=progress2 --delete {include_args} {exclude_args} {project_path}/ {remote_host}:{remote_dir}"
     print(cmd)
     os.system(cmd)
 
@@ -501,7 +501,7 @@ def rsync_code_v2(remote_host, remote_dir, project_path, rsync_include, rsync_ex
     if not rsync_include and not rsync_exclude:
         print('[chester] Warning: no rsync_include/rsync_exclude defined, syncing entire project')
 
-    cmd = ["rsync", "-avzh", "--progress", "--delete"]
+    cmd = ["rsync", "-avzhK", "--info=progress2", "--delete"]
     for p in (rsync_include or []):
         cmd.append(f"--include={p}")
     for p in (rsync_exclude or []):
