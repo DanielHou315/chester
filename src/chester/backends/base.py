@@ -34,6 +34,8 @@ class SlurmConfig:
     cpus_per_gpu: Optional[int] = None
     mem_per_gpu: Optional[str] = None
     ntasks_per_node: Optional[int] = None
+    email_begin: Optional[str] = None  # email address for BEGIN notifications
+    email_end: Optional[str] = None    # email address for END/FAIL notifications
     extra_directives: List[str] = field(default_factory=list)
 
     def with_overrides(self, overrides: Dict[str, Any]) -> SlurmConfig:
@@ -66,6 +68,18 @@ class SlurmConfig:
             lines.append(f"#SBATCH --mem-per-gpu={self.mem_per_gpu}")
         if self.ntasks_per_node is not None:
             lines.append(f"#SBATCH --ntasks-per-node={self.ntasks_per_node}")
+        # Email notifications
+        mail_types: List[str] = []
+        mail_user = None
+        if self.email_begin:
+            mail_types.append("BEGIN")
+            mail_user = self.email_begin
+        if self.email_end:
+            mail_types.extend(["END", "FAIL"])
+            mail_user = self.email_end
+        if mail_types and mail_user:
+            lines.append(f"#SBATCH --mail-user={mail_user}")
+            lines.append(f"#SBATCH --mail-type={','.join(mail_types)}")
         for directive in self.extra_directives:
             d = directive if directive.startswith("--") else f"--{directive}"
             lines.append(f"#SBATCH {d}")
@@ -132,6 +146,8 @@ def parse_backend_config(name: str, raw: Dict[str, Any]) -> BackendConfig:
             cpus_per_gpu=slurm_raw.get("cpus_per_gpu"),
             mem_per_gpu=slurm_raw.get("mem_per_gpu"),
             ntasks_per_node=slurm_raw.get("ntasks_per_node"),
+            email_begin=slurm_raw.get("email_begin"),
+            email_end=slurm_raw.get("email_end"),
             extra_directives=slurm_raw.get("extra_directives", []),
         )
 

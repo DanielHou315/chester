@@ -37,13 +37,18 @@ class LocalBackend(Backend):
             params, script, python_command, env, hydra_enabled, hydra_flags,
         )
 
+        # Host prepare always runs on the host (e.g. direnv, module loads).
+        host_parts: List[str] = list(self.get_prepare_commands())
+
         if self.config.singularity:
             inner: List[str] = []
             inner.extend(self.get_singularity_prepare_commands())
             inner.append(command)
-            command = self.wrap_with_singularity(inner)
+            host_parts.append(self.wrap_with_singularity(inner))
+        else:
+            host_parts.append(command)
 
-        return command
+        return " && ".join(host_parts)
 
     def generate_script(
         self,
@@ -76,9 +81,8 @@ class LocalBackend(Backend):
         lines.append("set -u")
         lines.append("set -e")
 
-        if not self.config.singularity:
-            prepare_cmds = self.get_prepare_commands()
-            lines.extend(prepare_cmds)
+        # Host prepare always runs on the host (e.g. direnv, module loads).
+        lines.extend(self.get_prepare_commands())
 
         params = task.get("params", {})
         command = self.build_python_command(
