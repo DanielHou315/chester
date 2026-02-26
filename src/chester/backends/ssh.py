@@ -8,7 +8,6 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Optional
 
 from .base import Backend, BackendConfig
-from ..utils import build_cli_args
 
 
 class SSHBackend(Backend):
@@ -32,6 +31,8 @@ class SSHBackend(Backend):
         script: str,
         python_command: str = "python",
         env: Optional[Dict[str, str]] = None,
+        hydra_enabled: bool = False,
+        hydra_flags: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Generate a full bash script for SSH-based remote execution.
 
@@ -52,6 +53,8 @@ class SSHBackend(Backend):
             script: Python script to run.
             python_command: Base python command.
             env: Optional env vars to prepend.
+            hydra_enabled: Use Hydra override format for args.
+            hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
 
         Returns:
             Full bash script as a string.
@@ -70,22 +73,12 @@ class SSHBackend(Backend):
         # Build inner commands (may be wrapped by singularity)
         inner: List[str] = []
 
-        # Source prepare.sh
         prepare_cmds = self.get_prepare_commands()
         inner.extend(prepare_cmds)
 
-        # Python command
-        wrapped = self.get_python_command(python_command)
-        command = f"{wrapped} {script}"
-
-        if env:
-            for k, v in env.items():
-                command = f"{k}={v} " + command
-
-        cli_args = build_cli_args(params)
-        if cli_args:
-            command += "  " + cli_args
-
+        command = self.build_python_command(
+            params, script, python_command, env, hydra_enabled, hydra_flags,
+        )
         inner.append(command)
 
         # .done marker

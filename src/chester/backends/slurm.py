@@ -8,7 +8,6 @@ import subprocess
 from typing import Any, Dict, List, Optional
 
 from .base import Backend, BackendConfig, SlurmConfig
-from ..utils import build_cli_args
 
 
 class SlurmBackend(Backend):
@@ -33,6 +32,8 @@ class SlurmBackend(Backend):
         python_command: str = "python",
         env: Optional[Dict[str, str]] = None,
         slurm_overrides: Optional[Dict[str, Any]] = None,
+        hydra_enabled: bool = False,
+        hydra_flags: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Generate a SLURM batch script.
 
@@ -54,6 +55,8 @@ class SlurmBackend(Backend):
                   this is often ``srun python``).
             env: Optional env vars.
             slurm_overrides: Optional dict to override SLURM params per-experiment.
+            hydra_enabled: Use Hydra override format for args.
+            hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
 
         Returns:
             Full SLURM batch script as a string.
@@ -94,22 +97,12 @@ class SlurmBackend(Backend):
         # ---- Inner commands (may be wrapped by singularity) ----
         inner: List[str] = []
 
-        # Source prepare.sh
         prepare_cmds = self.get_prepare_commands()
         inner.extend(prepare_cmds)
 
-        # Python command
-        wrapped = self.get_python_command(python_command)
-        command = f"{wrapped} {script}"
-
-        if env:
-            for k, v in env.items():
-                command = f"{k}={v} " + command
-
-        cli_args = build_cli_args(params)
-        if cli_args:
-            command += "  " + cli_args
-
+        command = self.build_python_command(
+            params, script, python_command, env, hydra_enabled, hydra_flags,
+        )
         inner.append(command)
 
         # .done marker

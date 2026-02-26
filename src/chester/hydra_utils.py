@@ -97,6 +97,46 @@ def variant_to_hydra_overrides(variant: Dict[str, Any]) -> List[str]:
     return overrides
 
 
+def build_hydra_args(
+    params: Dict[str, Any],
+    hydra_flags: Dict[str, Any] = None,
+) -> str:
+    """Build Hydra override args from a params dict.
+
+    Deserializes ``variant_data`` from *params*, sets ``hydra.run.dir``
+    to the task's ``log_dir``, and formats the variant as ``key=value``
+    Hydra overrides.  Also appends hydra flags (``--multirun``, etc.).
+
+    This is the Hydra counterpart to :func:`chester.utils.build_cli_args`.
+
+    Args:
+        params: Task parameter dict containing ``variant_data`` (base64-
+                encoded pickled variant) and ``log_dir``.
+        hydra_flags: Optional Hydra flags (e.g. ``{'multirun': True}``).
+
+    Returns:
+        Args string, e.g. ``"lr=0.01 batch_size=32 --multirun"``.
+    """
+    variant_data = pickle.loads(base64.b64decode(params["variant_data"]))
+    variant_data["hydra.run.dir"] = params["log_dir"]
+
+    parts: List[str] = []
+
+    # Hydra flags (--multirun, etc.)
+    if hydra_flags:
+        for flag, value in hydra_flags.items():
+            if value is True:
+                parts.append(f"--{flag}")
+            elif value not in [False, None]:
+                parts.append(f"--{flag}={value}")
+
+    # Hydra overrides (key=value)
+    overrides = variant_to_hydra_overrides(variant_data)
+    parts.extend(overrides)
+
+    return " ".join(parts)
+
+
 def to_hydra_command(
     params: Dict[str, Any],
     python_command: str = "python",
@@ -104,38 +144,31 @@ def to_hydra_command(
     hydra_flags: Dict[str, Any] = None,
     env: Dict[str, Any] = {},
 ) -> str:
-    """
-    Convert parameters to a Hydra command.
-    
+    """Convert parameters to a Hydra command.
+
+    This is a convenience wrapper that builds the full command string
+    including the python prefix.  Internally delegates to
+    :func:`build_hydra_args`.
+
     Args:
-        params: Dictionary of parameters
-        python_command: Python command to use
-        script: Script to run
-        hydra_flags: Additional Hydra flags (e.g., {'multirun': True})
-        
+        params: Dictionary of parameters (will be read, not mutated).
+        python_command: Python command to use.
+        script: Script to run.
+        hydra_flags: Additional Hydra flags (e.g., {'multirun': True}).
+        env: Environment variables to prepend.
+
     Returns:
-        Command string to execute
+        Command string to execute.
     """
-    variant_data = pickle.loads(base64.b64decode(params.pop("variant_data")))
-    variant_data["hydra.run.dir"] = params["log_dir"]
-    # Extract variant_data to convert to overrides
     command = python_command + " " + script
     for k, v in env.items():
         command = ("%s=%s " % (k, v)) + command
-    # Add Hydra flags
-    if hydra_flags:
-        for flag, value in hydra_flags.items():
-            if value is True:
-                command += f" --{flag}"
-            elif value not in [False, None]:
-                command += f" --{flag}={value}"
-    
-    # Add Hydra overrides
-    overrides = variant_to_hydra_overrides(variant_data)
-    if overrides:
-        command += " " + " ".join(overrides)
-    
-    return command 
+
+    args = build_hydra_args(params, hydra_flags)
+    if args:
+        command += " " + args
+
+    return command
 
 def run_hydra_command(command: str, log_dir: str, stub_method_call: Callable):
     from . import config

@@ -195,6 +195,57 @@ class Backend(ABC):
             prepare_path = os.path.join(remote_dir, prepare_path)
         return [f"source {prepare_path}"]
 
+    def build_python_command(
+        self,
+        params: Dict[str, Any],
+        script: str,
+        python_command: str = "python",
+        env: Optional[Dict[str, str]] = None,
+        hydra_enabled: bool = False,
+        hydra_flags: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Build the inner python command string with arguments.
+
+        This is the command *before* any backend wrapping (singularity,
+        prepare.sh, sbatch header, ssh, etc.).
+
+        When ``hydra_enabled=False``, args use ``--key value`` format
+        (via :func:`~chester.utils.build_cli_args`).
+
+        When ``hydra_enabled=True``, args use ``key=value`` Hydra override
+        format (via :func:`~chester.hydra_utils.build_hydra_args`).
+
+        Args:
+            params: Task parameter dict.
+            script: Python script/module to run.
+            python_command: Base python command (e.g. ``"python"``).
+            env: Optional env vars to prepend as ``KEY=VAL``.
+            hydra_enabled: Use Hydra override format instead of CLI args.
+            hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
+                         Only used when ``hydra_enabled=True``.
+
+        Returns:
+            The full command string.
+        """
+        wrapped = self.get_python_command(python_command)
+        command = f"{wrapped} {script}"
+
+        if env:
+            for k, v in env.items():
+                command = f"{k}={v} " + command
+
+        if hydra_enabled:
+            from ..hydra_utils import build_hydra_args
+            args = build_hydra_args(params, hydra_flags)
+        else:
+            from ..utils import build_cli_args
+            args = build_cli_args(params)
+
+        if args:
+            command += " " + args
+
+        return command
+
     def wrap_with_singularity(self, commands: List[str]) -> str:
         """Wrap a list of commands with singularity exec if configured."""
         sing = self.config.singularity

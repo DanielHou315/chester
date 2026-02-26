@@ -788,6 +788,8 @@ def run_experiment_lite(
                 script=script,
                 python_command=python_command,
                 env=merged_env or None,
+                hydra_enabled=hydra_enabled,
+                hydra_flags=hydra_flags,
             )
 
             if print_command:
@@ -823,6 +825,8 @@ def run_experiment_lite(
                 script=script,
                 python_command=python_command,
                 env=merged_env or None,
+                hydra_enabled=hydra_enabled,
+                hydra_flags=hydra_flags,
             )
             if backend_config.type == "slurm" and slurm_overrides:
                 gen_kwargs["slurm_overrides"] = slurm_overrides

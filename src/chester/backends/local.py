@@ -5,7 +5,6 @@ import subprocess
 from typing import Any, Dict, List, Optional
 
 from .base import Backend, BackendConfig
-from ..utils import build_cli_args
 
 
 class LocalBackend(Backend):
@@ -17,6 +16,8 @@ class LocalBackend(Backend):
         script: str,
         python_command: str = "python",
         env: Optional[Dict[str, str]] = None,
+        hydra_enabled: bool = False,
+        hydra_flags: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Generate the shell command string for a task.
 
@@ -25,25 +26,17 @@ class LocalBackend(Backend):
             script: Python script to run.
             python_command: Base python command (default ``python``).
             env: Optional env vars to prepend (``KEY=VAL``).
+            hydra_enabled: Use Hydra override format for args.
+            hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
 
         Returns:
             The full command string.
         """
         params = task.get("params", {})
-        wrapped = self.get_python_command(python_command)
-        command = f"{wrapped} {script}"
+        command = self.build_python_command(
+            params, script, python_command, env, hydra_enabled, hydra_flags,
+        )
 
-        # Prepend environment variables
-        if env:
-            for k, v in env.items():
-                command = f"{k}={v} " + command
-
-        # Append CLI args from params
-        cli_args = build_cli_args(params)
-        if cli_args:
-            command += "  " + cli_args
-
-        # Singularity wrapping (on the full command)
         if self.config.singularity:
             command = self.wrap_with_singularity([command])
 
@@ -55,6 +48,8 @@ class LocalBackend(Backend):
         script: str,
         python_command: str = "python",
         env: Optional[Dict[str, str]] = None,
+        hydra_enabled: bool = False,
+        hydra_flags: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Generate a full bash script for local execution.
 
@@ -65,6 +60,8 @@ class LocalBackend(Backend):
             script: Python script to run.
             python_command: Base python command.
             env: Optional env vars.
+            hydra_enabled: Use Hydra override format for args.
+            hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
 
         Returns:
             Full bash script as a string.
@@ -75,24 +72,14 @@ class LocalBackend(Backend):
         lines.append("set -u")
         lines.append("set -e")
 
-        # Source prepare.sh if configured
         prepare_cmds = self.get_prepare_commands()
         lines.extend(prepare_cmds)
 
-        # Build the inner python command (without singularity wrapping)
         params = task.get("params", {})
-        wrapped = self.get_python_command(python_command)
-        command = f"{wrapped} {script}"
+        command = self.build_python_command(
+            params, script, python_command, env, hydra_enabled, hydra_flags,
+        )
 
-        if env:
-            for k, v in env.items():
-                command = f"{k}={v} " + command
-
-        cli_args = build_cli_args(params)
-        if cli_args:
-            command += "  " + cli_args
-
-        # Singularity wrapping
         if self.config.singularity:
             command = self.wrap_with_singularity([command])
 
