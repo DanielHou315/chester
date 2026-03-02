@@ -113,3 +113,103 @@ def test_save_git_snapshot_has_timestamp(tmp_path):
     assert "timestamp" in info
     # Should be an ISO format string
     assert "T" in info["timestamp"]
+
+
+def test_submodule_info_dirty_flag(tmp_path):
+    """_get_submodule_info sets dirty=True when submodule has uncommitted changes."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    subprocess.run(["git", "init"], cwd=parent, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=parent, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=parent, check=True, capture_output=True)
+
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    subprocess.run(["git", "init"], cwd=sub, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=sub, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=sub, check=True, capture_output=True)
+    (sub / "sub_file.txt").write_text("original")
+    subprocess.run(["git", "add", "."], cwd=sub, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "sub init"], cwd=sub, check=True, capture_output=True)
+
+    subprocess.run(
+        ["git", "-c", "protocol.file.allow=always", "submodule", "add", str(sub), "sub"],
+        cwd=parent, check=True, capture_output=True,
+    )
+    (parent / "root.txt").write_text("root")
+    subprocess.run(["git", "add", "."], cwd=parent, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "parent init"], cwd=parent, check=True, capture_output=True)
+
+    (parent / "sub" / "sub_file.txt").write_text("modified")
+
+    from chester.git_snapshot import _get_submodule_info
+    infos = _get_submodule_info(str(parent))
+    assert len(infos) == 1
+    assert infos[0]["dirty"] is True
+    assert infos[0]["untracked_files"] == []
+
+
+def test_submodule_info_clean_flag(tmp_path):
+    """_get_submodule_info sets dirty=False when submodule is clean."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    subprocess.run(["git", "init"], cwd=parent, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=parent, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=parent, check=True, capture_output=True)
+
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    subprocess.run(["git", "init"], cwd=sub, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=sub, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=sub, check=True, capture_output=True)
+    (sub / "sub_file.txt").write_text("original")
+    subprocess.run(["git", "add", "."], cwd=sub, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "sub init"], cwd=sub, check=True, capture_output=True)
+
+    subprocess.run(
+        ["git", "-c", "protocol.file.allow=always", "submodule", "add", str(sub), "sub"],
+        cwd=parent, check=True, capture_output=True,
+    )
+    (parent / "root.txt").write_text("root")
+    subprocess.run(["git", "add", "."], cwd=parent, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "parent init"], cwd=parent, check=True, capture_output=True)
+
+    from chester.git_snapshot import _get_submodule_info
+    infos = _get_submodule_info(str(parent))
+    assert len(infos) == 1
+    assert infos[0]["dirty"] is False
+    assert infos[0]["untracked_files"] == []
+
+
+def test_submodule_info_untracked_files(tmp_path):
+    """_get_submodule_info records untracked filenames inside dirty submodule."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    subprocess.run(["git", "init"], cwd=parent, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=parent, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=parent, check=True, capture_output=True)
+
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    subprocess.run(["git", "init"], cwd=sub, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=sub, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=sub, check=True, capture_output=True)
+    (sub / "sub_file.txt").write_text("original")
+    subprocess.run(["git", "add", "."], cwd=sub, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "sub init"], cwd=sub, check=True, capture_output=True)
+
+    subprocess.run(
+        ["git", "-c", "protocol.file.allow=always", "submodule", "add", str(sub), "sub"],
+        cwd=parent, check=True, capture_output=True,
+    )
+    (parent / "root.txt").write_text("root")
+    subprocess.run(["git", "add", "."], cwd=parent, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "parent init"], cwd=parent, check=True, capture_output=True)
+
+    (parent / "sub" / "new_script.py").write_text("print('hello')")
+
+    from chester.git_snapshot import _get_submodule_info
+    infos = _get_submodule_info(str(parent))
+    assert len(infos) == 1
+    assert infos[0]["dirty"] is True
+    assert "new_script.py" in infos[0]["untracked_files"]

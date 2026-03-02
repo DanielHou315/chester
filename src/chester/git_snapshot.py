@@ -62,6 +62,31 @@ def _get_submodule_info(cwd: str) -> List[dict]:
         }
         if description:
             entry["description"] = description
+
+        # Detect dirty state inside the submodule working tree (initialized only)
+        sub_abs = os.path.join(cwd, path_val)
+        if status != "uninitialized" and os.path.isdir(sub_abs):
+            status_result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=sub_abs,
+                capture_output=True,
+                text=True,
+            )
+            entry["dirty"] = bool(status_result.stdout.strip())
+
+            untracked_result = subprocess.run(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                cwd=sub_abs,
+                capture_output=True,
+                text=True,
+            )
+            entry["untracked_files"] = [
+                f for f in untracked_result.stdout.splitlines() if f.strip()
+            ]
+        else:
+            entry["dirty"] = False
+            entry["untracked_files"] = []
+
         submodules.append(entry)
 
     return submodules
