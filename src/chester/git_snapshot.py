@@ -219,9 +219,9 @@ def save_git_snapshot(log_dir: str, repo_path: Optional[str] = None) -> dict:
     )
     branch = result.stdout.strip() if result.returncode == 0 else "unknown"
 
-    # Dirty flag (working tree + index)
+    # Dirty flag (working tree + index, ignoring submodule state)
     result = subprocess.run(
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "--ignore-submodules=all"],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -248,18 +248,49 @@ def save_git_snapshot(log_dir: str, repo_path: Optional[str] = None) -> dict:
     with open(info_path, "w") as f:
         json.dump(info, f, indent=2)
 
-    # Write diff patch if there are uncommitted changes
-    if dirty:
-        # Staged + unstaged changes for tracked files
+    # Collect submodule diffs
+    submodule_patches = []
+    for sub in submodules:
+        if not sub.get("dirty"):
+            continue
+        sub_abs = os.path.join(cwd, sub["path"])
+        if not os.path.isdir(sub_abs):
+            continue
+
+        # Full diff of tracked changes inside the submodule
+        try:
+            sub_diff_result = subprocess.run(
+                ["git", "diff", "HEAD"],
+                cwd=sub_abs,
+                capture_output=True,
+                text=True,
+            )
+            sub_diff = sub_diff_result.stdout
+        except Exception:
+            sub_diff = ""
+
+        section_lines = [f"# === Submodule: {sub['path']} ===\n"]
+        if sub_diff:
+            section_lines.append(sub_diff)
+        if sub.get("untracked_files"):
+            section_lines.append("\n# Untracked files:\n")
+            for uf in sub["untracked_files"]:
+                section_lines.append(f"# {uf}\n")
+        submodule_patches.append("".join(section_lines))
+
+    # Write diff patch if there are uncommitted changes (parent or any submodule)
+    any_dirty = dirty or bool(submodule_patches)
+    if any_dirty:
+        # Staged + unstaged changes for tracked files in the parent
         result = subprocess.run(
-            ["git", "diff", "HEAD"],
+            ["git", "diff", "HEAD", "--ignore-submodules=all"],
             cwd=cwd,
             capture_output=True,
             text=True,
         )
         diff_content = result.stdout
 
-        # Untracked file names (not their content — could be large)
+        # Untracked file names in the parent (not their content — could be large)
         result_untracked = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard"],
             cwd=cwd,
@@ -276,5 +307,8 @@ def save_git_snapshot(log_dir: str, repo_path: Optional[str] = None) -> dict:
                 f.write("\n# Untracked files:\n")
                 for line in untracked_files.splitlines():
                     f.write(f"# {line}\n")
+            for section in submodule_patches:
+                f.write("\n")
+                f.write(section)
 
     return info

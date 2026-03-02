@@ -213,3 +213,93 @@ def test_submodule_info_untracked_files(tmp_path):
     assert len(infos) == 1
     assert infos[0]["dirty"] is True
     assert "new_script.py" in infos[0]["untracked_files"]
+
+
+def _make_parent_with_dirty_submodule(tmp_path):
+    """Helper: returns (parent_path, sub_path) with a clean submodule."""
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    for cmd in [
+        ["git", "init"],
+        ["git", "config", "user.email", "test@test.com"],
+        ["git", "config", "user.name", "Test"],
+    ]:
+        subprocess.run(cmd, cwd=parent, check=True, capture_output=True)
+
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    for cmd in [
+        ["git", "init"],
+        ["git", "config", "user.email", "test@test.com"],
+        ["git", "config", "user.name", "Test"],
+    ]:
+        subprocess.run(cmd, cwd=sub, check=True, capture_output=True)
+    (sub / "sub_file.txt").write_text("original")
+    subprocess.run(["git", "add", "."], cwd=sub, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "sub init"], cwd=sub, check=True, capture_output=True)
+
+    subprocess.run(
+        ["git", "-c", "protocol.file.allow=always", "submodule", "add", str(sub), "sub"],
+        cwd=parent, check=True, capture_output=True
+    )
+    (parent / "root.txt").write_text("root")
+    subprocess.run(["git", "add", "."], cwd=parent, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "parent init"], cwd=parent, check=True, capture_output=True)
+
+    return parent, sub
+
+
+def test_submodule_dirty_diff_written_to_patch(tmp_path):
+    """Dirty submodule changes appear in git_diff.patch with section header."""
+    parent, _ = _make_parent_with_dirty_submodule(tmp_path)
+    (parent / "sub" / "sub_file.txt").write_text("modified content")
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    save_git_snapshot(str(log_dir), repo_path=str(parent))
+
+    patch = (log_dir / "git_diff.patch").read_text()
+    assert "# === Submodule: sub ===" in patch
+    assert "modified content" in patch
+
+
+def test_submodule_dirty_patch_created_when_parent_clean(tmp_path):
+    """git_diff.patch is created even when the parent repo is clean."""
+    parent, _ = _make_parent_with_dirty_submodule(tmp_path)
+    (parent / "sub" / "sub_file.txt").write_text("only sub is dirty")
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    info = save_git_snapshot(str(log_dir), repo_path=str(parent))
+
+    assert info["dirty"] is False
+    assert (log_dir / "git_diff.patch").exists()
+    patch = (log_dir / "git_diff.patch").read_text()
+    assert "# === Submodule: sub ===" in patch
+
+
+def test_submodule_untracked_files_listed_in_patch(tmp_path):
+    """Untracked filenames inside dirty submodule appear as comments in patch."""
+    parent, _ = _make_parent_with_dirty_submodule(tmp_path)
+    (parent / "sub" / "new_script.py").write_text("print('hello')")
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    save_git_snapshot(str(log_dir), repo_path=str(parent))
+
+    patch = (log_dir / "git_diff.patch").read_text()
+    assert "# === Submodule: sub ===" in patch
+    assert "# new_script.py" in patch
+
+
+def test_clean_submodule_no_section_in_patch(tmp_path):
+    """A clean submodule does not produce a section in git_diff.patch."""
+    parent, _ = _make_parent_with_dirty_submodule(tmp_path)
+    (parent / "root.txt").write_text("parent dirty")
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    save_git_snapshot(str(log_dir), repo_path=str(parent))
+
+    patch = (log_dir / "git_diff.patch").read_text()
+    assert "# === Submodule:" not in patch
