@@ -258,16 +258,13 @@ def save_git_snapshot(log_dir: str, repo_path: Optional[str] = None) -> dict:
             continue
 
         # Full diff of tracked changes inside the submodule
-        try:
-            sub_diff_result = subprocess.run(
-                ["git", "diff", "HEAD"],
-                cwd=sub_abs,
-                capture_output=True,
-                text=True,
-            )
-            sub_diff = sub_diff_result.stdout
-        except Exception:
-            sub_diff = ""
+        sub_diff_result = subprocess.run(
+            ["git", "diff", "HEAD"],
+            cwd=sub_abs,
+            capture_output=True,
+            text=True,
+        )
+        sub_diff = sub_diff_result.stdout
 
         section_lines = [f"# === Submodule: {sub['path']} ===\n"]
         if sub_diff:

@@ -215,8 +215,8 @@ def test_submodule_info_untracked_files(tmp_path):
     assert "new_script.py" in infos[0]["untracked_files"]
 
 
-def _make_parent_with_dirty_submodule(tmp_path):
-    """Helper: returns (parent_path, sub_path) with a clean submodule."""
+def _make_parent_with_submodule(tmp_path):
+    """Helper: returns parent_path with a clean initialized submodule at sub/."""
     parent = tmp_path / "parent"
     parent.mkdir()
     for cmd in [
@@ -246,12 +246,12 @@ def _make_parent_with_dirty_submodule(tmp_path):
     subprocess.run(["git", "add", "."], cwd=parent, check=True, capture_output=True)
     subprocess.run(["git", "commit", "-m", "parent init"], cwd=parent, check=True, capture_output=True)
 
-    return parent, sub
+    return parent
 
 
 def test_submodule_dirty_diff_written_to_patch(tmp_path):
     """Dirty submodule changes appear in git_diff.patch with section header."""
-    parent, _ = _make_parent_with_dirty_submodule(tmp_path)
+    parent = _make_parent_with_submodule(tmp_path)
     (parent / "sub" / "sub_file.txt").write_text("modified content")
 
     log_dir = tmp_path / "logs"
@@ -265,7 +265,7 @@ def test_submodule_dirty_diff_written_to_patch(tmp_path):
 
 def test_submodule_dirty_patch_created_when_parent_clean(tmp_path):
     """git_diff.patch is created even when the parent repo is clean."""
-    parent, _ = _make_parent_with_dirty_submodule(tmp_path)
+    parent = _make_parent_with_submodule(tmp_path)
     (parent / "sub" / "sub_file.txt").write_text("only sub is dirty")
 
     log_dir = tmp_path / "logs"
@@ -280,7 +280,7 @@ def test_submodule_dirty_patch_created_when_parent_clean(tmp_path):
 
 def test_submodule_untracked_files_listed_in_patch(tmp_path):
     """Untracked filenames inside dirty submodule appear as comments in patch."""
-    parent, _ = _make_parent_with_dirty_submodule(tmp_path)
+    parent = _make_parent_with_submodule(tmp_path)
     (parent / "sub" / "new_script.py").write_text("print('hello')")
 
     log_dir = tmp_path / "logs"
@@ -294,7 +294,7 @@ def test_submodule_untracked_files_listed_in_patch(tmp_path):
 
 def test_clean_submodule_no_section_in_patch(tmp_path):
     """A clean submodule does not produce a section in git_diff.patch."""
-    parent, _ = _make_parent_with_dirty_submodule(tmp_path)
+    parent = _make_parent_with_submodule(tmp_path)
     (parent / "root.txt").write_text("parent dirty")
 
     log_dir = tmp_path / "logs"
