@@ -279,3 +279,60 @@ def test_fresh_start_v2_remote_scans_and_deletes(tmp_path, capsys):
     rm_calls = [c for c in mock_subproc.call_args_list
                 if c.args and 'ssh' in str(c.args[0]) and 'rm' in str(c.args[0])]
     assert len(rm_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: run_experiment_lite fresh= parameter
+# ---------------------------------------------------------------------------
+
+def test_run_experiment_lite_has_fresh_param():
+    """run_experiment_lite must expose fresh=False in its signature."""
+    import inspect
+    from chester.run_exp import run_experiment_lite
+    sig = inspect.signature(run_experiment_lite)
+    assert 'fresh' in sig.parameters
+    assert sig.parameters['fresh'].default is False
+
+
+def test_run_experiment_lite_fresh_deletes_existing_dir(tmp_path):
+    """Integration: fresh=True via run_experiment_lite deletes existing variant dirs."""
+    import os
+    from chester.run_exp import run_experiment_lite
+
+    # Write a minimal .chester/config.yaml so load_config() finds a local backend
+    chester_dir = tmp_path / ".chester"
+    chester_dir.mkdir()
+    (chester_dir / "config.yaml").write_text(
+        f"log_dir: {tmp_path / 'data'}\n"
+        "package_manager: python\n"
+        "backends:\n"
+        "  local:\n"
+        "    type: local\n"
+    )
+
+    # Pre-create an "existing" variant directory that fresh=True should delete
+    existing_var = tmp_path / "data" / "train" / "myexp" / "1_myexp_lr_0.001"
+    existing_var.mkdir(parents=True)
+    (existing_var / "model.pt").write_bytes(b"x" * 100)
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        os.environ["CHESTER_CONFIG_PATH"] = str(chester_dir / "config.yaml")
+        with patch("builtins.input", return_value="yes"):
+            run_experiment_lite(
+                stub_method_call=lambda variant, log_dir, exp_name: None,
+                variant={"chester_first_variant": True, "chester_last_variant": True},
+                variations=[],
+                mode="local",
+                exp_prefix="myexp",
+                fresh=True,
+                dry=True,
+                git_snapshot=False,
+            )
+    finally:
+        os.chdir(old_cwd)
+        os.environ.pop("CHESTER_CONFIG_PATH", None)
+
+    # The pre-existing directory must have been deleted by fresh=True
+    assert not existing_var.exists()

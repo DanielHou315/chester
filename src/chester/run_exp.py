@@ -653,6 +653,11 @@ def _fresh_start_v2(
               f'"{exp_prefix}". Proceeding.')
         return
 
+    if remote_scan_failed and not any_local:
+        print(f'[chester] fresh=True — remote scan of {backend_config.host} failed '
+              f'and no local directories exist. Proceeding without cleanup.')
+        return
+
     # Build unified name set (local names + remote names)
     local_by_name = {r['name']: r for r in local_rows}
     remote_by_name = {r['name']: r for r in remote_rows}
@@ -736,23 +741,27 @@ def _fresh_start_v2(
 
     # Delete remote dirs (batched into one SSH call)
     if is_remote:
-        existing_remote = [
-            os.path.join(remote_batch_dir, r['name'])
-            for r in remote_rows if r.get('exists')
-        ]
-        if existing_remote:
-            quoted = ' '.join(shlex.quote(p) for p in existing_remote)
-            try:
-                subprocess.run(
-                    ['ssh', backend_config.host, f'rm -rf {quoted}'],
-                    check=True,
-                )
-                n = len(existing_remote)
-                print(f"[chester] Deleted {n} remote "
-                      f"{'directory' if n == 1 else 'directories'} "
-                      f"on {backend_config.host}")
-            except Exception as e:
-                print(f"[chester] Warning: remote deletion failed: {e}")
+        if remote_scan_failed:
+            print(f"[chester] Warning: remote scan of {backend_config.host} failed — "
+                  f"remote directories were NOT deleted. Clean them manually.")
+        else:
+            existing_remote = [
+                os.path.join(remote_batch_dir, r['name'])
+                for r in remote_rows if r.get('exists')
+            ]
+            if existing_remote:
+                quoted = ' '.join(shlex.quote(p) for p in existing_remote)
+                try:
+                    subprocess.run(
+                        ['ssh', backend_config.host, f'rm -rf {quoted}'],
+                        check=True,
+                    )
+                    n = len(existing_remote)
+                    print(f"[chester] Deleted {n} remote "
+                          f"{'directory' if n == 1 else 'directories'} "
+                          f"on {backend_config.host}")
+                except Exception as e:
+                    print(f"[chester] Warning: remote deletion failed: {e}")
 
     print()
 
