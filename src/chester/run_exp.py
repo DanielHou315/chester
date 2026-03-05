@@ -515,6 +515,52 @@ def rsync_code_v2(remote_host, remote_dir, project_path, rsync_include, rsync_ex
         raise subprocess.CalledProcessError(result.returncode, cmd)
 
 
+def _format_size(size_bytes: int) -> str:
+    """Format a byte count as a human-readable string."""
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size_bytes < 1024:
+            if unit == 'B':
+                return f"{size_bytes} B"
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} PB"
+
+
+def _scan_local_batch_dir(batch_dir: str) -> list:
+    """List and scan all variant subdirectories under batch_dir.
+
+    Returns a list of dicts sorted by name:
+        [{'name': str, 'path': str, 'size_bytes': int, 'pt_count': int}]
+    Returns [] if batch_dir does not exist.
+    """
+    if not os.path.isdir(batch_dir):
+        return []
+
+    rows = []
+    for entry in sorted(os.listdir(batch_dir)):
+        full = os.path.join(batch_dir, entry)
+        if not os.path.isdir(full):
+            continue
+        size_bytes = 0
+        pt_count = 0
+        for dirpath, _dirnames, filenames in os.walk(full):
+            for fn in filenames:
+                fp = os.path.join(dirpath, fn)
+                try:
+                    size_bytes += os.path.getsize(fp)
+                except OSError:
+                    pass
+                if fn.endswith('.pt') or fn.endswith('.pth'):
+                    pt_count += 1
+        rows.append({
+            'name': entry,
+            'path': full,
+            'size_bytes': size_bytes,
+            'pt_count': pt_count,
+        })
+    return rows
+
+
 exp_count = -2
 sub_process_popens = []
 now = datetime.datetime.now(dateutil.tz.tzlocal())
