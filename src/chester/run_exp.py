@@ -834,6 +834,9 @@ def run_experiment_lite(
         extra_pull_dirs: Extra directories to pull from remote.
         sync_env: Override sync_on_launch config.
         git_snapshot: Save git state to log_dir before running (default True).
+        confirm: If True, skip the remote execution confirmation prompt.
+        fresh: If True, scan and delete existing exp_prefix dirs before launching;
+               always prompts for confirmation regardless of confirm flag.
         **kwargs: Additional parameters passed to the python script.
     """
     # Fix mutable defaults
