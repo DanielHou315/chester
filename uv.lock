@@ -14,6 +14,20 @@ resolution-markers = [
     "python_full_version < '3.9' and sys_platform != 'linux'",
 ]
 
+[manifest]
+
+[[manifest.dependency-metadata]]
+name = "nvidia-curobo"
+version = "0.7.7.post1.dev5"
+requires-dist = ["pybind11", "networkx", "numpy", "numpy-quaternion", "pyyaml", "setuptools-scm>=6.2", "torch>=1.10", "trimesh", "yourdfpy>=0.0.53", "warp-lang>=0.9.0", "scipy>=1.7.0", "tqdm", "wheel", "importlib-resources", "scikit-image"]
+provides-extras = ["ci", "smooth", "usd", "dev", "isaacsim", "doc"]
+
+[[manifest.dependency-metadata]]
+name = "pytorch3d"
+version = "0.7.5"
+requires-dist = ["fvcore", "iopath"]
+provides-extras = ["all", "dev", "implicitron"]
+
 [[package]]
 name = "absl-py"
 version = "2.3.1"
