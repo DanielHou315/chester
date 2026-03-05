@@ -498,13 +498,114 @@ By default, chester saves your git state before running experiments:
 
 ```
 data/train/my_experiment/0_my_exp/
-  git_info.json      # commit hash, branch, dirty flag, timestamp
-  git_diff.patch     # uncommitted changes (if any)
+  git_info.json      # commit hash, branch, dirty flag, timestamp, submodule info
+  git_diff.patch     # uncommitted changes (if any), including submodule diffs
   checkpoint.pt      # your outputs
   metrics.json
 ```
 
 Disable with `git_snapshot=False`.
+
+### What `git_info.json` records
+
+```json
+{
+  "commit": "a3773d1",
+  "branch": "main",
+  "dirty": false,
+  "timestamp": "2026-03-04T12:00:00",
+  "untracked_symlinks": [],
+  "submodules": [
+    {
+      "path": "third_party/mylib",
+      "commit": "b1efc13",
+      "status": "initialized",
+      "dirty": true,
+      "untracked_files": ["experiment.py"]
+    }
+  ]
+}
+```
+
+The top-level `dirty` reflects only the parent repo. Each submodule entry carries its own `dirty` flag and list of untracked filenames.
+
+### Submodule dirty tracking
+
+When a submodule has uncommitted changes, they are appended to `git_diff.patch` under a labeled section:
+
+```
+# === Submodule: third_party/mylib ===
+diff --git a/model.py b/model.py
+...
+# Untracked files:
+# experiment.py
+```
+
+`git_diff.patch` is created even when the parent repo is clean, as long as any submodule is dirty.
+
+### Recovering a snapshot
+
+```bash
+# 1. Restore the parent repo
+git checkout <commit>
+git apply git_diff.patch   # applies parent-repo changes
+
+# 2. For each submodule (commit hash from git_info.json)
+cd <submodule_path>
+git checkout <submodule_commit>
+
+# 3. Apply submodule changes (copy the section between === headers)
+git apply - <<'PATCH'
+<paste the "# === Submodule: path ===" section from git_diff.patch>
+PATCH
+```
+
+Sub-submodules are not recursed; untracked file *contents* inside submodules are not captured (names only).
+
+---
+
+## Starting Fresh
+
+When an experiment batch fails partway through (e.g., a bug only caught after the `--no-debug` run starts), log directories are left in a partial state. Re-running with the same `exp_prefix` would collide with the old directories. Use `fresh=True` to scan and delete them before launching:
+
+```python
+run_experiment_lite(
+    stub_method_call=train,
+    variant=v,
+    mode="greatlakes",
+    exp_prefix="my_exp",
+    fresh=True,          # scan, confirm, then delete existing dirs
+)
+```
+
+Chester scans `{log_dir}/{sub_dir}/{exp_prefix}/` for all existing variant directories and displays a table:
+
+```
+[chester] fresh=True — scanning directories for exp_prefix='my_exp' mode=greatlakes
+
+  #   Experiment                       Local               Remote
+  ─   ──────────────────────────────   ────────────────    ────────────────
+  1   1_my_exp_lr_0.001_bs_32           2.3 GB   47 pt      4.1 GB   89 pt
+  2   2_my_exp_lr_0.001_bs_64           1.8 GB   42 pt      3.9 GB   81 pt
+  3   3_my_exp_lr_0.01_bs_32            —                   512 MB    8 pt
+  ...
+
+  Local total:   2 dirs   4.1 GB   89 pt/pth files
+  Remote total:  3 dirs   8.5 GB   178 pt/pth files
+
+WARNING: This will permanently delete ALL directories listed above.
+Type 'yes' to confirm:
+```
+
+**Rules:**
+- If no existing directories are found, chester prints a message and proceeds without prompting.
+- The confirmation prompt is hardcoded `input()` — it is **never bypassed** by `confirm=True` or any other flag.
+- Typing anything other than `yes` exits with code 0 (no launch, no deletion).
+- Deletion uses `shutil.rmtree` locally and a batched `ssh rm -rf` remotely.
+- If the remote scan fails (SSH error), the table shows `[scan failed]`; local dirs are still deleted after confirmation, and a warning is printed that remote dirs were not cleaned.
+- For `type: local` backends, only local columns are shown.
+
+The scan and deletion happen after all experiment names and log paths are fully resolved (step 5 of the launch flow) but before rsync, git snapshot, or job submission — so deletions are safe and the exp name counter is computed against the pre-deletion state.
 
 ---
 
@@ -694,6 +795,10 @@ run_experiment_lite(
 
     # Reproducibility
     git_snapshot=True,               # save git commit + diff to log dir
+
+    # Fresh start
+    fresh=False,                     # scan and delete existing exp_prefix dirs before
+                                     # launching; always prompts for confirmation
 
     # Variant naming
     variations=None,                 # list of param keys to include in exp name
