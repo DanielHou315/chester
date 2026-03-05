@@ -14,6 +14,7 @@ import time
 import datetime
 import dateutil.tz
 import json
+import shlex
 from . import config
 
 
@@ -561,7 +562,7 @@ def _scan_local_batch_dir(batch_dir: str) -> list:
     return rows
 
 
-def _scan_remote_batch_dir(host: str, remote_batch_dir: str):
+def _scan_remote_batch_dir(host: str, remote_batch_dir: str) -> list | None:
     """Scan all variant subdirs under remote_batch_dir via a single SSH call.
 
     Returns a list of dicts sorted by name:
@@ -569,10 +570,9 @@ def _scan_remote_batch_dir(host: str, remote_batch_dir: str):
     Returns None if the SSH call fails.
     Returns [] if the remote directory does not exist or is empty.
     """
-    import shlex as _shlex
     script = (
-        f"if [ -d {_shlex.quote(remote_batch_dir)} ]; then "
-        f"for dir in {_shlex.quote(remote_batch_dir)}/*/; do "
+        f"if [ -d {shlex.quote(remote_batch_dir)} ]; then "
+        f"for dir in {shlex.quote(remote_batch_dir)}/*/; do "
         f"[ -d \"$dir\" ] || continue; "
         f"name=$(basename \"$dir\"); "
         f"size=$(du -sh \"$dir\" 2>/dev/null | cut -f1); "
