@@ -613,6 +613,150 @@ def _scan_remote_batch_dir(host: str, remote_batch_dir: str) -> list | None:
         return None
 
 
+def _fresh_start_v2(
+    exp_prefix: str,
+    sub_dir: str,
+    cfg_log_dir: str,
+    backend_config,
+    project_path: str,
+    is_remote: bool,
+    mode: str,
+) -> None:
+    """Scan, display, confirm, and delete all variant dirs under exp_prefix.
+
+    Called before any submission when fresh=True.  Exits the process if the
+    user does not confirm.
+    """
+    import shutil as _shutil
+
+    local_batch_dir = os.path.join(cfg_log_dir, sub_dir, exp_prefix)
+    local_rows = _scan_local_batch_dir(local_batch_dir)
+
+    # Remote scan
+    remote_rows = []
+    remote_scan_failed = False
+    if is_remote:
+        remote_batch_dir = _map_local_to_remote_log_dir_v2(
+            local_batch_dir, project_path, backend_config.remote_dir
+        )
+        result = _scan_remote_batch_dir(backend_config.host, remote_batch_dir)
+        if result is None:
+            remote_scan_failed = True
+        else:
+            remote_rows = result
+
+    any_local = bool(local_rows)
+    any_remote = any(r.get('exists') for r in remote_rows)
+
+    if not any_local and not any_remote and not remote_scan_failed:
+        print(f'[chester] fresh=True — no existing directories found under '
+              f'"{exp_prefix}". Proceeding.')
+        return
+
+    # Build unified name set (local names + remote names)
+    local_by_name = {r['name']: r for r in local_rows}
+    remote_by_name = {r['name']: r for r in remote_rows}
+    all_names = sorted(set(local_by_name) | set(remote_by_name))
+
+    print(f'\n[chester] fresh=True — scanning directories for '
+          f'exp_prefix=\'{exp_prefix}\' mode={mode}\n')
+
+    name_col = max((len(n) for n in all_names), default=30)
+    name_col = max(name_col, 30)
+
+    if is_remote:
+        hdr = (f"  {'#':>3}  {'Experiment':<{name_col}}  "
+               f"{'Local':<22}  {'Remote':<22}")
+        sep = (f"  {'─':>3}  {'─' * name_col}  {'─' * 22}  {'─' * 22}")
+    else:
+        hdr = f"  {'#':>3}  {'Experiment':<{name_col}}  {'Local':<22}"
+        sep = f"  {'─':>3}  {'─' * name_col}  {'─' * 22}"
+
+    print(hdr)
+    print(sep)
+
+    total_local_bytes = 0
+    total_local_pt = 0
+    total_local_dirs = 0
+    total_remote_pt = 0
+    total_remote_dirs = 0
+
+    for i, name in enumerate(all_names, 1):
+        lr = local_by_name.get(name)
+        if lr:
+            local_str = f"{_format_size(lr['size_bytes'])}  {lr['pt_count']} pt"
+            total_local_bytes += lr['size_bytes']
+            total_local_pt += lr['pt_count']
+            total_local_dirs += 1
+        else:
+            local_str = '—'
+
+        if is_remote:
+            rr = remote_by_name.get(name)
+            if remote_scan_failed:
+                remote_str = '[scan failed]'
+            elif rr and rr.get('exists'):
+                remote_str = f"{rr['size_str']}  {rr['pt_count']} pt"
+                total_remote_pt += rr['pt_count']
+                total_remote_dirs += 1
+            else:
+                remote_str = '—'
+            print(f"  {i:>3}  {name:<{name_col}}  {local_str:<22}  {remote_str:<22}")
+        else:
+            print(f"  {i:>3}  {name:<{name_col}}  {local_str:<22}")
+
+    print()
+    print(f"  Local total:   {total_local_dirs} dirs   "
+          f"{_format_size(total_local_bytes)}   {total_local_pt} pt/pth files")
+    if is_remote:
+        if remote_scan_failed:
+            print("  Remote total:  [scan failed]")
+        else:
+            print(f"  Remote total:  {total_remote_dirs} dirs   "
+                  f"{total_remote_pt} pt/pth files")
+
+    print()
+    print("WARNING: This will permanently delete ALL directories listed above.")
+    answer = input("Type 'yes' to confirm: ").strip().lower()
+    if answer != 'yes':
+        print("Aborted.")
+        sys.exit(0)
+
+    print()
+
+    # Delete local dirs
+    for name in all_names:
+        lr = local_by_name.get(name)
+        if lr:
+            try:
+                _shutil.rmtree(lr['path'])
+                print(f"[chester] Deleted local: {lr['path']}")
+            except Exception as e:
+                print(f"[chester] Warning: could not delete {lr['path']}: {e}")
+
+    # Delete remote dirs (batched into one SSH call)
+    if is_remote:
+        existing_remote = [
+            os.path.join(remote_batch_dir, r['name'])
+            for r in remote_rows if r.get('exists')
+        ]
+        if existing_remote:
+            quoted = ' '.join(shlex.quote(p) for p in existing_remote)
+            try:
+                subprocess.run(
+                    ['ssh', backend_config.host, f'rm -rf {quoted}'],
+                    check=True,
+                )
+                n = len(existing_remote)
+                print(f"[chester] Deleted {n} remote "
+                      f"{'directory' if n == 1 else 'directories'} "
+                      f"on {backend_config.host}")
+            except Exception as e:
+                print(f"[chester] Warning: remote deletion failed: {e}")
+
+    print()
+
+
 exp_count = -2
 sub_process_popens = []
 now = datetime.datetime.now(dateutil.tz.tzlocal())
@@ -651,6 +795,7 @@ def run_experiment_lite(
         sync_env=None,
         git_snapshot=True,
         confirm=False,
+        fresh=False,
         **kwargs):
     """
     Serialize the stubbed method call and run the experiment using the
@@ -827,6 +972,20 @@ def run_experiment_lite(
         elif "variant" in task:
             del task["variant"]
         task["env"] = task.get("env", dict()) or dict()
+
+    # ----------------------------------------------------------------
+    # 5.5. Fresh start — delete existing dirs before launch
+    # ----------------------------------------------------------------
+    if fresh and first_variant:
+        _fresh_start_v2(
+            exp_prefix=exp_prefix,
+            sub_dir=sub_dir,
+            cfg_log_dir=cfg_log_dir,
+            backend_config=backend_config,
+            project_path=project_path,
+            is_remote=is_remote,
+            mode=mode,
+        )
 
     # ----------------------------------------------------------------
     # 6. Git snapshot (before any execution)

@@ -135,3 +135,147 @@ def test_scan_remote_batch_dir_empty_output():
         result = _scan_remote_batch_dir("myhost", "/remote/logs/train/myexp")
 
     assert result == []
+
+
+def _make_batch_tasks(tmp_path, exp_prefix="myexp", n=3):
+    """Build minimal batch_tasks list with _local_log_dir and log_dir set."""
+    tasks = []
+    for i in range(1, n + 1):
+        exp_name = f"{i}_{exp_prefix}_lr_{i}"
+        local_dir = str(tmp_path / "data" / "train" / exp_prefix / exp_name)
+        tasks.append({
+            "exp_name": exp_name,
+            "_local_log_dir": local_dir,
+            "log_dir": local_dir,  # local backend: same as _local_log_dir
+        })
+    return tasks
+
+
+def test_fresh_start_v2_no_dirs_prints_message(tmp_path, capsys):
+    from chester.run_exp import _fresh_start_v2
+
+    batch_dir = tmp_path / "data" / "train" / "myexp"
+    # batch_dir doesn't exist → no existing dirs
+
+    _fresh_start_v2(
+        exp_prefix="myexp",
+        sub_dir="train",
+        cfg_log_dir=str(tmp_path / "data"),
+        backend_config=None,
+        project_path=str(tmp_path),
+        is_remote=False,
+        mode="local",
+    )
+
+    captured = capsys.readouterr()
+    assert "no existing directories found" in captured.out.lower()
+
+
+def test_fresh_start_v2_aborts_on_non_yes(tmp_path, capsys):
+    from chester.run_exp import _fresh_start_v2
+
+    # Create an existing variant dir
+    var_dir = tmp_path / "data" / "train" / "myexp" / "1_myexp_lr_0.001"
+    var_dir.mkdir(parents=True)
+    (var_dir / "model.pt").write_bytes(b"x" * 100)
+
+    with patch("builtins.input", return_value="no"):
+        with pytest.raises(SystemExit) as exc_info:
+            _fresh_start_v2(
+                exp_prefix="myexp",
+                sub_dir="train",
+                cfg_log_dir=str(tmp_path / "data"),
+                backend_config=None,
+                project_path=str(tmp_path),
+                is_remote=False,
+                mode="local",
+            )
+    assert exc_info.value.code == 0
+    # Directory should NOT have been deleted
+    assert var_dir.exists()
+
+
+def test_fresh_start_v2_deletes_local_on_yes(tmp_path):
+    from chester.run_exp import _fresh_start_v2
+
+    var_dir = tmp_path / "data" / "train" / "myexp" / "1_myexp_lr_0.001"
+    var_dir.mkdir(parents=True)
+    (var_dir / "model.pt").write_bytes(b"x" * 100)
+
+    with patch("builtins.input", return_value="yes"):
+        _fresh_start_v2(
+            exp_prefix="myexp",
+            sub_dir="train",
+            cfg_log_dir=str(tmp_path / "data"),
+            backend_config=None,
+            project_path=str(tmp_path),
+            is_remote=False,
+            mode="local",
+        )
+
+    assert not var_dir.exists()
+
+
+def test_fresh_start_v2_shows_table_with_pt_count(tmp_path, capsys):
+    from chester.run_exp import _fresh_start_v2
+
+    var_dir = tmp_path / "data" / "train" / "myexp" / "1_myexp_lr_0.001"
+    var_dir.mkdir(parents=True)
+    (var_dir / "model.pt").write_bytes(b"x" * 1024)
+    (var_dir / "final.pth").write_bytes(b"x" * 2048)
+
+    with patch("builtins.input", return_value="yes"):
+        _fresh_start_v2(
+            exp_prefix="myexp",
+            sub_dir="train",
+            cfg_log_dir=str(tmp_path / "data"),
+            backend_config=None,
+            project_path=str(tmp_path),
+            is_remote=False,
+            mode="local",
+        )
+
+    captured = capsys.readouterr()
+    assert "1_myexp_lr_0.001" in captured.out
+    assert "2 pt" in captured.out
+
+
+def test_fresh_start_v2_remote_scans_and_deletes(tmp_path, capsys):
+    from chester.run_exp import _fresh_start_v2
+    from chester.backends.base import BackendConfig
+
+    # Create local variant dir
+    var_dir = tmp_path / "data" / "train" / "myexp" / "1_myexp"
+    var_dir.mkdir(parents=True)
+    (var_dir / "model.pt").write_bytes(b"x" * 512)
+
+    backend_config = BackendConfig(
+        name="gl", type="slurm",
+        host="gl",
+        remote_dir="/remote/project",
+    )
+
+    fake_remote_rows = [
+        {"name": "1_myexp", "exists": True, "size_str": "4.1G", "pt_count": 89},
+    ]
+
+    with patch("chester.run_exp._scan_remote_batch_dir", return_value=fake_remote_rows), \
+         patch("chester.run_exp.subprocess.run") as mock_subproc, \
+         patch("builtins.input", return_value="yes"):
+        _fresh_start_v2(
+            exp_prefix="myexp",
+            sub_dir="train",
+            cfg_log_dir=str(tmp_path / "data"),
+            backend_config=backend_config,
+            project_path=str(tmp_path),
+            is_remote=True,
+            mode="gl",
+        )
+
+    captured = capsys.readouterr()
+    assert "4.1G" in captured.out
+    assert "89 pt" in captured.out
+    # ssh rm -rf should have been called
+    rm_calls = [c for c in mock_subproc.call_args_list
+                if c.args and 'ssh' in str(c.args[0]) and 'rm' in str(c.args[0])]
+    assert len(rm_calls) == 1

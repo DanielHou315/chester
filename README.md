@@ -641,6 +641,8 @@ run_experiment_lite(
 
     # ── Misc ──────────────────────────────────────────────────────────────────
     confirm=False,              # prompt before remote submission
+    fresh=False,                # if True, scan and delete existing exp_prefix dirs
+                                # before launching; always prompts for confirmation
     sync_env=None,              # override package_manager sync behaviour
 )
 ```
