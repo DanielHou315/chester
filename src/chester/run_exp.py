@@ -561,6 +561,58 @@ def _scan_local_batch_dir(batch_dir: str) -> list:
     return rows
 
 
+def _scan_remote_batch_dir(host: str, remote_batch_dir: str):
+    """Scan all variant subdirs under remote_batch_dir via a single SSH call.
+
+    Returns a list of dicts sorted by name:
+        [{'name': str, 'exists': bool, 'size_str': str, 'pt_count': int}]
+    Returns None if the SSH call fails.
+    Returns [] if the remote directory does not exist or is empty.
+    """
+    import shlex as _shlex
+    script = (
+        f"if [ -d {_shlex.quote(remote_batch_dir)} ]; then "
+        f"for dir in {_shlex.quote(remote_batch_dir)}/*/; do "
+        f"[ -d \"$dir\" ] || continue; "
+        f"name=$(basename \"$dir\"); "
+        f"size=$(du -sh \"$dir\" 2>/dev/null | cut -f1); "
+        f"count=$(find \"$dir\" \\( -name \"*.pt\" -o -name \"*.pth\" \\) "
+        f"2>/dev/null | wc -l | tr -d ' '); "
+        f"echo \"$name|$size|$count\"; "
+        f"done; fi"
+    )
+    try:
+        result = subprocess.run(
+            ['ssh', host, script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        rows = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split('|', 2)
+            if len(parts) != 3:
+                continue
+            name, size_str, count_str = parts
+            exists = size_str.strip() != '—'
+            try:
+                pt_count = int(count_str.strip())
+            except ValueError:
+                pt_count = 0
+            rows.append({
+                'name': name.strip(),
+                'exists': exists,
+                'size_str': size_str.strip() if exists else '—',
+                'pt_count': pt_count,
+            })
+        return sorted(rows, key=lambda r: r['name'])
+    except Exception:
+        return None
+
+
 exp_count = -2
 sub_process_popens = []
 now = datetime.datetime.now(dateutil.tz.tzlocal())

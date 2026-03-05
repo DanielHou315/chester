@@ -88,3 +88,50 @@ def test_scan_local_batch_dir_counts_nested_pt(tmp_path):
 
     result = _scan_local_batch_dir(str(tmp_path))
     assert result[0]["pt_count"] == 2
+
+
+def test_scan_remote_batch_dir_parses_output():
+    from chester.run_exp import _scan_remote_batch_dir
+    fake_output = (
+        "1_myexp_lr_0.001|2.3G|47\n"
+        "2_myexp_lr_0.01|—|0\n"
+        "3_myexp_lr_0.1|512M|8\n"
+    )
+    with patch("chester.run_exp.subprocess.run") as mock_run:
+        mock_run.return_value.stdout = fake_output
+        mock_run.return_value.returncode = 0
+        result = _scan_remote_batch_dir("myhost", "/remote/logs/train/myexp")
+
+    assert len(result) == 3
+
+    r1 = next(r for r in result if r["name"] == "1_myexp_lr_0.001")
+    assert r1["exists"] is True
+    assert r1["size_str"] == "2.3G"
+    assert r1["pt_count"] == 47
+
+    r2 = next(r for r in result if r["name"] == "2_myexp_lr_0.01")
+    assert r2["exists"] is False
+    assert r2["pt_count"] == 0
+
+    r3 = next(r for r in result if r["name"] == "3_myexp_lr_0.1")
+    assert r3["exists"] is True
+    assert r3["pt_count"] == 8
+
+
+def test_scan_remote_batch_dir_ssh_failure():
+    from chester.run_exp import _scan_remote_batch_dir
+    with patch("chester.run_exp.subprocess.run") as mock_run:
+        mock_run.side_effect = Exception("SSH timeout")
+        result = _scan_remote_batch_dir("myhost", "/remote/logs/train/myexp")
+
+    assert result is None
+
+
+def test_scan_remote_batch_dir_empty_output():
+    from chester.run_exp import _scan_remote_batch_dir
+    with patch("chester.run_exp.subprocess.run") as mock_run:
+        mock_run.return_value.stdout = ""
+        mock_run.return_value.returncode = 0
+        result = _scan_remote_batch_dir("myhost", "/remote/logs/train/myexp")
+
+    assert result == []
