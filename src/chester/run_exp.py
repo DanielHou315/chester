@@ -18,10 +18,6 @@ import shlex
 from . import config
 
 
-# Auto-pull manifest management
-_auto_pull_manifest_path = None
-_auto_pull_jobs = []
-
 # Deprecated modes that are no longer supported
 _DEPRECATED_MODES = frozenset({
     "ec2", "autobot", "singularity", "local_singularity",
@@ -166,83 +162,31 @@ def _map_local_to_remote_log_dir_v2(local_log_dir, project_path, remote_dir):
     return os.path.join(remote_dir, relative_path)
 
 
-def _init_auto_pull_manifest(exp_prefix: str, mode: str):
-    """Initialize the manifest file path for this batch of experiments."""
-    global _auto_pull_manifest_path, _auto_pull_jobs
-    manifest_dir = os.path.join(config.LOG_DIR, '.chester_manifests')
-    os.makedirs(manifest_dir, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime('%m%d_%H%M%S')
-    _auto_pull_manifest_path = os.path.join(manifest_dir, f'{exp_prefix}_{mode}_{timestamp}.json')
-    _auto_pull_jobs = []
-
-
-def _init_auto_pull_manifest_v2(exp_prefix, mode, log_dir):
-    """Initialize auto-pull manifest using the new config system."""
-    global _auto_pull_manifest_path, _auto_pull_jobs
-    manifest_dir = os.path.join(log_dir, '.chester_manifests')
-    os.makedirs(manifest_dir, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime('%m%d_%H%M%S')
-    _auto_pull_manifest_path = os.path.join(manifest_dir, f'{exp_prefix}_{mode}_{timestamp}.json')
-    _auto_pull_jobs = []
-
-
-def _add_job_to_manifest(host: str, remote_log_dir: str, local_log_dir: str,
-                         exp_name: str, extra_pull_dirs: list = None,
-                         slurm_job_id: int = None):
-    """Add a job to the auto-pull manifest."""
-    global _auto_pull_jobs
-    entry = {
+def _register_job_for_pull(
+    host: str,
+    remote_log_dir: str,
+    local_log_dir: str,
+    exp_name: str,
+    exp_prefix: str,
+    extra_pull_dirs: list = None,
+    slurm_job_id: int = None,
+):
+    """Write a single job file to the persistent job store."""
+    from chester.job_store import write_job_file, get_default_job_store_dir, JOB_STATUS_PENDING
+    job_store_dir = get_default_job_store_dir()
+    job = {
         'host': host,
         'remote_log_dir': remote_log_dir,
         'local_log_dir': local_log_dir,
         'exp_name': exp_name,
+        'exp_prefix': exp_prefix,
         'extra_pull_dirs': extra_pull_dirs or [],
-        'pid_file': os.path.join(remote_log_dir, '.chester_pid'),
-        'status': 'pending',
-        'submitted_at': datetime.datetime.now().isoformat()
+        'status': JOB_STATUS_PENDING,
     }
     if slurm_job_id is not None:
-        entry['slurm_job_id'] = slurm_job_id
-    _auto_pull_jobs.append(entry)
-
-
-def _save_and_spawn_auto_pull(dry: bool = False, poll_interval: int = 60):
-    """Save the manifest and spawn the auto-pull poller."""
-    global _auto_pull_manifest_path, _auto_pull_jobs
-
-    if not _auto_pull_jobs:
-        print('[chester] No jobs to track for auto-pull')
-        return
-
-    assert _auto_pull_manifest_path is not None, "chester auto_pull: manifest path not initialized"
-
-    # Save manifest
-    with open(_auto_pull_manifest_path, 'w') as f:
-        json.dump(_auto_pull_jobs, f, indent=2)
-    print(f'[chester] Saved auto-pull manifest: {_auto_pull_manifest_path}')
-    print(f'[chester] Tracking {len(_auto_pull_jobs)} jobs for auto-pull')
-
-    if dry:
-        print('[chester] Dry run - not spawning auto-pull poller')
-        return
-
-    # Spawn background poller
-    log_file = _auto_pull_manifest_path.replace('.json', '.log')
-
-    poller_cmd = [
-        sys.executable, "-m", "chester.auto_pull",
-        "--manifest", _auto_pull_manifest_path,
-        "--poll-interval", str(poll_interval),
-    ]
-
-    print(f'[chester] Spawning auto-pull poller: {" ".join(poller_cmd)}')
-    subprocess.Popen(
-        poller_cmd,
-        stdout=open(log_file, 'w'),
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    print(f'[chester] Auto-pull log: {log_file}')
+        job['slurm_job_id'] = slurm_job_id
+    job_id = write_job_file(job_store_dir, job)
+    print(f'[chester] Registered job for pull: {exp_name} -> {job_store_dir}/{job_id}.json')
 
 
 def monitor_processes(active_processes, max_processes=2, sleep_time=1):
@@ -799,7 +743,6 @@ def run_experiment_lite(
         hydra_enabled=False,
         hydra_flags=None,
         auto_pull=False,
-        auto_pull_interval=60,
         extra_pull_dirs=None,
         sync_env=None,
         git_snapshot=True,
@@ -839,7 +782,6 @@ def run_experiment_lite(
         hydra_enabled: Use Hydra command line format.
         hydra_flags: Additional Hydra flags.
         auto_pull: Enable automatic result pulling from remote.
-        auto_pull_interval: Poll interval in seconds for auto-pull.
         extra_pull_dirs: Extra directories to pull from remote.
         sync_env: Override sync_on_launch config.
         git_snapshot: Save git state to log_dir before running (default True).
@@ -1034,12 +976,6 @@ def run_experiment_lite(
         )
 
     # ----------------------------------------------------------------
-    # 9. Initialize auto-pull manifest (first variant only)
-    # ----------------------------------------------------------------
-    if is_remote and first_variant and auto_pull:
-        _init_auto_pull_manifest_v2(exp_prefix, mode, cfg_log_dir)
-
-    # ----------------------------------------------------------------
     # 10. Generate script and submit via backend
     # ----------------------------------------------------------------
     for task in batch_tasks:
@@ -1133,22 +1069,19 @@ def run_experiment_lite(
             # Submit via backend
             submit_result = backend.submit(backend_task, script_content, dry=dry)
 
-            # Add job to auto-pull manifest
+            # Register job in persistent job store
             if auto_pull and not dry:
                 slurm_job_id = submit_result if backend_config.type == "slurm" else None
-                _add_job_to_manifest(
+                resolved_extra_pull_dirs = _resolve_extra_pull_dirs_v2(
+                    extra_pull_dirs, project_path, backend_config.remote_dir
+                )
+                _register_job_for_pull(
                     host=backend_config.host,
                     remote_log_dir=remote_log_dir,
                     local_log_dir=local_log_dir,
                     exp_name=task.get('exp_name', ''),
-                    extra_pull_dirs=_resolve_extra_pull_dirs_v2(
-                        extra_pull_dirs, project_path, backend_config.remote_dir
-                    ),
+                    exp_prefix=exp_prefix,
+                    extra_pull_dirs=resolved_extra_pull_dirs,
                     slurm_job_id=slurm_job_id,
                 )
 
-    # ----------------------------------------------------------------
-    # 11. Spawn auto-pull poller (last variant only)
-    # ----------------------------------------------------------------
-    if is_remote and last_variant and auto_pull:
-        _save_and_spawn_auto_pull(dry=dry, poll_interval=auto_pull_interval)

@@ -169,45 +169,114 @@ def test_resolve_extra_pull_dirs_v2_empty():
     assert _resolve_extra_pull_dirs_v2([], "/p", "/r") == []
 
 
-def test_add_job_to_manifest_includes_slurm_job_id():
-    """slurm_job_id is included in the manifest entry when provided."""
-    from chester.run_exp import _add_job_to_manifest, _auto_pull_jobs
-    import chester.run_exp as run_exp_mod
+class TestRemoteJobWritesJobFile:
+    """Verify that a remote job submission with auto_pull=True writes one job file."""
 
-    # Save and reset global state
-    old_jobs = run_exp_mod._auto_pull_jobs
-    run_exp_mod._auto_pull_jobs = []
-    try:
-        _add_job_to_manifest(
-            host="gl",
-            remote_log_dir="/remote/logs/exp1",
-            local_log_dir="/local/logs/exp1",
-            exp_name="test_exp",
-            slurm_job_id=12345678,
-        )
-        jobs = run_exp_mod._auto_pull_jobs
-        assert len(jobs) == 1
-        assert jobs[0]['slurm_job_id'] == 12345678
-    finally:
-        run_exp_mod._auto_pull_jobs = old_jobs
+    def _make_chester_config(self, tmp_path):
+        chester_dir = tmp_path / ".chester"
+        chester_dir.mkdir()
+        (chester_dir / "config.yaml").write_text(f"""
+log_dir: {tmp_path}/data
+project_path: {tmp_path}
+package_manager: python
+backends:
+  myremote:
+    type: ssh
+    host: myhost.example.com
+    remote_dir: /remote/project
+""")
+        return chester_dir
 
+    def test_auto_pull_writes_exactly_one_job_file(self, tmp_path, monkeypatch):
+        """Remote submission with auto_pull=True writes one pending job file."""
+        import json
+        import os
+        from pathlib import Path
 
-def test_add_job_to_manifest_omits_slurm_job_id_when_none():
-    """slurm_job_id is not present in the manifest entry when not provided."""
-    from chester.run_exp import _add_job_to_manifest
-    import chester.run_exp as run_exp_mod
+        chester_dir = self._make_chester_config(tmp_path)
+        job_store_dir = tmp_path / "job_store"
 
-    old_jobs = run_exp_mod._auto_pull_jobs
-    run_exp_mod._auto_pull_jobs = []
-    try:
-        _add_job_to_manifest(
-            host="gl",
-            remote_log_dir="/remote/logs/exp1",
-            local_log_dir="/local/logs/exp1",
-            exp_name="test_exp",
-        )
-        jobs = run_exp_mod._auto_pull_jobs
-        assert len(jobs) == 1
-        assert jobs[0].get('slurm_job_id') is None
-    finally:
-        run_exp_mod._auto_pull_jobs = old_jobs
+        # Redirect job store dir to tmp_path
+        monkeypatch.setenv("CHESTER_CONFIG_PATH", str(chester_dir / "config.yaml"))
+        import chester.job_store as job_store_mod
+        monkeypatch.setattr(job_store_mod, "get_default_job_store_dir", lambda: job_store_dir)
+
+        # Also patch inside run_exp's lazy import of get_default_job_store_dir
+        import chester.run_exp as run_exp_mod
+
+        def _fake_register(host, remote_log_dir, local_log_dir, exp_name,
+                           exp_prefix, extra_pull_dirs=None, slurm_job_id=None):
+            from chester.job_store import write_job_file, JOB_STATUS_PENDING
+            job = {
+                'host': host,
+                'remote_log_dir': remote_log_dir,
+                'local_log_dir': local_log_dir,
+                'exp_name': exp_name,
+                'exp_prefix': exp_prefix,
+                'extra_pull_dirs': extra_pull_dirs or [],
+                'status': JOB_STATUS_PENDING,
+            }
+            if slurm_job_id is not None:
+                job['slurm_job_id'] = slurm_job_id
+            write_job_file(job_store_dir, job)
+
+        monkeypatch.setattr(run_exp_mod, "_register_job_for_pull", _fake_register)
+
+        # Mock the backend submission so we don't actually SSH anywhere
+        import chester.backends as backends_mod
+
+        class FakeSSHBackend:
+            def __init__(self):
+                self.config = type('Cfg', (), {
+                    'type': 'ssh',
+                    'host': 'myhost.example.com',
+                    'remote_dir': '/remote/project',
+                    'singularity': None,
+                })()
+
+            def generate_script(self, task, **kwargs):
+                return "#!/bin/bash\necho hello"
+
+            def submit(self, task, script_content, dry=False):
+                return None  # SSH backends return None (no job id)
+
+        fake_backend = FakeSSHBackend()
+
+        original_create = backends_mod.create_backend
+        monkeypatch.setattr(backends_mod, "create_backend",
+                            lambda bc, cfg: fake_backend)
+
+        # Also stub rsync so it doesn't run
+        monkeypatch.setattr(run_exp_mod, "rsync_code_v2", lambda **kw: None)
+
+        # Bypass remote confirmation prompt
+        monkeypatch.setattr(run_exp_mod, "remote_confirmed", True)
+
+        old_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_exp_mod.run_experiment_lite(
+                stub_method_call=lambda v, l, e: None,
+                variant={
+                    "chester_first_variant": True,
+                    "chester_last_variant": True,
+                },
+                mode="myremote",
+                exp_prefix="test_autopull",
+                auto_pull=True,
+                dry=False,
+                git_snapshot=False,
+                confirm=True,
+            )
+        finally:
+            os.chdir(old_cwd)
+            os.environ.pop("CHESTER_CONFIG_PATH", None)
+
+        # Verify exactly one .json file was written
+        json_files = list(job_store_dir.glob("*.json"))
+        assert len(json_files) == 1, f"Expected 1 job file, got {len(json_files)}"
+
+        job_data = json.loads(json_files[0].read_text())
+        assert job_data.get("status") == "pending"
+        assert job_data.get("host") is not None
+        assert job_data["host"] == "myhost.example.com"
