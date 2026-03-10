@@ -666,8 +666,8 @@ def _fresh_start_v2(
 
     print()
     print("WARNING: This will permanently delete ALL directories listed above.")
-    answer = input("Type 'yes' to confirm: ").strip().lower()
-    if answer != 'yes':
+    answer = input("Type 'yes' or 'y' to confirm: ").strip().lower()
+    if answer not in ('yes', 'y'):
         print("Aborted.")
         sys.exit(0)
 
