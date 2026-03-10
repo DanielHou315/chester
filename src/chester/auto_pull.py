@@ -99,6 +99,9 @@ def execute_pull_for_job(job: dict, bare: bool = False) -> str:
     rather than creating a nested subdirectory. Do not remove the trailing
     slashes from pull_results().
 
+    Failed jobs are not pulled: the job file is marked failed and no rsync
+    is attempted. To retrieve logs from a failed job, use `chester pull`.
+
     Returns one of: 'pulled', 'pull_failed', 'failed', 'running'.
     """
     host = job['host']
@@ -121,6 +124,8 @@ def execute_pull_for_job(job: dict, bare: bool = False) -> str:
         pid = get_remote_pid(host, remote_log_dir)
         if pid:
             kill_process_tree(host, pid)
+        else:
+            print(f'[chester] Warning: could not read PID for {exp_name} — orphan process may still be running')
         if pull_results(host, remote_log_dir, local_log_dir, bare=bare):
             pull_extra_dirs(host, extra_pull_dirs, bare=bare)
             return 'pulled'

@@ -181,3 +181,23 @@ class TestExecutePullForJob:
              mock.patch('chester.auto_pull.pull_extra_dirs', return_value=True):
             assert execute_pull_for_job(job) == 'pulled'
         mock_kill.assert_called_once_with('gl', 12345)
+
+    def test_done_orphans_no_pid_still_pulls(self):
+        """done_orphans with pid=None: skip kill, still attempt pull."""
+        job = self._make_job()
+        with mock.patch('chester.auto_pull.check_job_status', return_value='done_orphans'), \
+             mock.patch('chester.auto_pull.get_remote_pid', return_value=None), \
+             mock.patch('chester.auto_pull.kill_process_tree') as mock_kill, \
+             mock.patch('chester.auto_pull.pull_results', return_value=True), \
+             mock.patch('chester.auto_pull.pull_extra_dirs', return_value=True):
+            assert execute_pull_for_job(job) == 'pulled'
+        mock_kill.assert_not_called()
+
+    def test_done_orphans_pull_failure_returns_pull_failed(self):
+        """done_orphans: kill succeeds but rsync fails -> 'pull_failed'."""
+        job = self._make_job()
+        with mock.patch('chester.auto_pull.check_job_status', return_value='done_orphans'), \
+             mock.patch('chester.auto_pull.get_remote_pid', return_value=99), \
+             mock.patch('chester.auto_pull.kill_process_tree'), \
+             mock.patch('chester.auto_pull.pull_results', return_value=False):
+            assert execute_pull_for_job(job) == 'pull_failed'
