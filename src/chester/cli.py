@@ -63,6 +63,8 @@ def cmd_pull_remote(
             delete_job_file(job_store_dir, job_id)
         elif result == 'failed':
             mark_job_failed(job_store_dir, job_id)
+        else:
+            pass  # pull_failed and running: leave file as pending, no action needed
 
     print(
         f'[chester] Done: {counts["pulled"]} pulled, '
@@ -85,10 +87,11 @@ def cmd_pull(host: str, folder: str, bare: bool, dry: bool):
 
     folder = folder.rstrip('/')
     slash_pos = folder.rfind('/')
+    base_data_dir = os.path.join(config.PROJECT_PATH, 'data', host)
     if slash_pos != -1:
-        local_dir = os.path.join('./data', host, folder[:slash_pos])
+        local_dir = os.path.join(base_data_dir, folder[:slash_pos])
     else:
-        local_dir = os.path.join('./data', host, folder)
+        local_dir = os.path.join(base_data_dir, folder)
 
     remote_data_dir = os.path.join(config.REMOTE_DIR[host], 'data', 'local', folder)
 
@@ -99,9 +102,9 @@ def cmd_pull(host: str, folder: str, bare: bool, dry: bool):
     ]
     if bare:
         cmd += [
+            '--include', '*.csv', '--include', '*.json',
             '--exclude', '*.pkl', '--exclude', '*.png', '--exclude', '*.gif',
             '--exclude', '*.pth', '--exclude', '*.pt',
-            '--include', '*.csv', '--include', '*.json',
         ]
 
     if dry:
