@@ -120,7 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog='chester',
         description='Chester ML experiment launcher CLI',
     )
-    sub = parser.add_subparsers(dest='command', required=True)
+    sub = parser.add_subparsers(dest='command')
 
     pr = sub.add_parser('pull-remote', help='Check pending remote jobs and pull completed ones')
     pr.add_argument('--prefix', type=str, default=None,
@@ -154,7 +154,6 @@ def main():
         cmd_pull(host=args.host, folder=args.folder, bare=args.bare, dry=args.dry)
     else:
         parser.print_help()
-        sys.exit(1)
 
 
 if __name__ == '__main__':
