@@ -107,73 +107,9 @@ class TestBuildParser:
         args = p.parse_args(['pull-remote', '--prefix', 'my_exp'])
         assert args.prefix == 'my_exp'
 
-    def test_pull_subcommand_exists(self):
+    def test_pull_subcommand_does_not_exist(self):
         from chester.cli import build_parser
+        import pytest
         p = build_parser()
-        args = p.parse_args(['pull', 'gl', 'some/folder'])
-        assert args.command == 'pull'
-        assert args.host == 'gl'
-        assert args.folder == 'some/folder'
-
-
-class TestCmdPull:
-    def test_dry_run_prints_rsync_and_no_subprocess(self, capsys):
-        """In dry mode, prints rsync command and does not call subprocess.run."""
-        import chester.config as real_config_module
-        from chester.cli import cmd_pull
-        with mock.patch('chester.cli.subprocess.run') as mock_run, \
-             mock.patch.object(real_config_module, 'PROJECT_PATH', '/home/user/project'), \
-             mock.patch.object(real_config_module, 'REMOTE_DIR', {'gl': '/remote/gl'}):
-            cmd_pull(host='gl', folder='myexp', bare=False, dry=True)
-        mock_run.assert_not_called()
-        out = capsys.readouterr().out
-        assert 'rsync' in out
-        assert 'gl:' in out
-
-    def test_bare_includes_before_excludes(self):
-        """bare=True: --include patterns appear before --exclude patterns."""
-        import chester.config as real_config_module
-        from chester.cli import cmd_pull
-        captured = []
-        def fake_run(cmd, **kwargs):
-            captured.extend(cmd)
-            return mock.Mock(returncode=0)
-        with mock.patch('chester.cli.subprocess.run', side_effect=fake_run), \
-             mock.patch.object(real_config_module, 'PROJECT_PATH', '/home/user/project'), \
-             mock.patch.object(real_config_module, 'REMOTE_DIR', {'gl': '/remote/gl'}):
-            cmd_pull(host='gl', folder='myexp', bare=True, dry=False)
-        include_pos = next(i for i, x in enumerate(captured) if x == '--include')
-        exclude_pos = next(i for i, x in enumerate(captured) if x == '--exclude')
-        assert include_pos < exclude_pos, "All --include rules must precede --exclude rules"
-
-    def test_trailing_slashes(self):
-        """Both rsync source and destination must have trailing slashes."""
-        import chester.config as real_config_module
-        from chester.cli import cmd_pull
-        captured = []
-        def fake_run(cmd, **kwargs):
-            captured.extend(cmd)
-            return mock.Mock(returncode=0)
-        with mock.patch('chester.cli.subprocess.run', side_effect=fake_run), \
-             mock.patch.object(real_config_module, 'PROJECT_PATH', '/home/user/project'), \
-             mock.patch.object(real_config_module, 'REMOTE_DIR', {'gl': '/remote/gl'}):
-            cmd_pull(host='gl', folder='myexp', bare=False, dry=False)
-        src = next(x for x in captured if x.startswith('gl:'))
-        dst = next(x for x in captured if x.startswith('/home/user/project'))
-        assert src.endswith('/'), f"rsync source must end with /: {src}"
-        assert dst.endswith('/'), f"rsync dest must end with /: {dst}"
-
-    def test_uses_project_path_not_cwd(self):
-        """local_dir is rooted at config.PROJECT_PATH, not './data'."""
-        import chester.config as real_config_module
-        from chester.cli import cmd_pull
-        captured = []
-        def fake_run(cmd, **kwargs):
-            captured.extend(cmd)
-            return mock.Mock(returncode=0)
-        with mock.patch('chester.cli.subprocess.run', side_effect=fake_run), \
-             mock.patch.object(real_config_module, 'PROJECT_PATH', '/home/user/project'), \
-             mock.patch.object(real_config_module, 'REMOTE_DIR', {'gl': '/remote/gl'}):
-            cmd_pull(host='gl', folder='myexp', bare=False, dry=False)
-        dst = next(x for x in captured if '/home/user/project' in x)
-        assert dst.startswith('/home/user/project'), f"dst should be rooted at PROJECT_PATH: {dst}"
+        with pytest.raises(SystemExit):
+            p.parse_args(['pull', 'gl', 'some/folder'])
