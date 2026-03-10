@@ -17,9 +17,9 @@ JOB_STATUS_FAILED = 'failed'
 
 
 def get_default_job_store_dir() -> Path:
-    """Return {PROJECT_PATH}/chester/auto_pull_jobs/."""
+    """Return {PROJECT_PATH}/.chester/auto_pull_jobs/."""
     from chester import config
-    return Path(config.PROJECT_PATH) / 'chester' / 'auto_pull_jobs'
+    return Path(config.PROJECT_PATH) / '.chester' / 'auto_pull_jobs'
 
 
 def write_job_file(job_store_dir: Path, job: dict) -> str:
