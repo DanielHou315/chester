@@ -2,7 +2,7 @@
 import json
 import pytest
 from pathlib import Path
-from chester.job_store import write_job_file, load_pending_jobs, delete_job_file, JOB_STATUS_PENDING
+from chester.job_store import write_job_file, load_pending_jobs, delete_job_file, mark_job_failed, JOB_STATUS_PENDING, JOB_STATUS_FAILED
 
 
 def test_write_job_file_creates_file(tmp_path):
@@ -88,3 +88,19 @@ def test_delete_job_file_missing_is_noop(tmp_path):
 def test_load_pending_jobs_empty_dir(tmp_path):
     jobs = load_pending_jobs(tmp_path)
     assert jobs == []
+
+
+def test_mark_job_failed(tmp_path):
+    job = {
+        'host': 'gl', 'remote_log_dir': '/r/1', 'local_log_dir': '/l/1',
+        'exp_name': 'exp1', 'exp_prefix': 'pfx', 'status': JOB_STATUS_PENDING,
+    }
+    job_id = write_job_file(tmp_path, job)
+    mark_job_failed(tmp_path, job_id)
+    file_path = tmp_path / f'{job_id}.json'
+    assert file_path.exists()
+    import json
+    data = json.loads(file_path.read_text())
+    assert data['status'] == JOB_STATUS_FAILED
+    pending = load_pending_jobs(tmp_path)
+    assert all(j['job_id'] != job_id for j in pending)
