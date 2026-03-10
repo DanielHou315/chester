@@ -1,26 +1,14 @@
-#!/usr/bin/env python
 """
-Chester Auto Pull - Background poller for automatic result synchronization.
+Chester Auto Pull - Status checking and result pulling for remote jobs.
 
-This script polls remote hosts for .done marker files and automatically
-pulls results back to the local machine when jobs complete.
-
-Usage:
-    # Run as background process (spawned by chester)
-    python chester/auto_pull.py --manifest /path/to/manifest.json
-
-    # Run manually to pull specific jobs
-    python chester/auto_pull.py --manifest /path/to/manifest.json --once
+Provides helpers to check job status on remote hosts and pull results
+back to the local machine when jobs complete.
 """
 
 import os
-import sys
-import json
-import time
-import argparse
 import subprocess
+import time
 from pathlib import Path
-from datetime import datetime
 from typing import Optional
 
 from . import config
@@ -43,8 +31,15 @@ def check_done_marker(host: str, remote_log_dir: str) -> bool:
         return False
 
 
-def pull_results(host: str, remote_log_dir: str, local_log_dir: str, bare: bool = False) -> bool:
-    """Pull results from remote host to local directory."""
+def pull_results(host: str, remote_log_dir: str, local_log_dir: str,
+                 bare: bool = False, exclude_patterns: list = None) -> bool:
+    """Pull results from remote host to local directory.
+
+    Args:
+        exclude_patterns: Additional rsync --exclude patterns (e.g. from
+            rsync_pull_exclude in chester config). Applied in addition to
+            bare-mode excludes.
+    """
     # Create local directory if it doesn't exist
     os.makedirs(os.path.dirname(local_log_dir), exist_ok=True)
 
@@ -60,6 +55,9 @@ def pull_results(host: str, remote_log_dir: str, local_log_dir: str, bare: bool 
             "--exclude", "*.pth",
             "--exclude", "*.pt",
         ])
+
+    for pattern in (exclude_patterns or []):
+        cmd.extend(["--exclude", pattern])
 
     print(f"[auto_pull] Pulling: {host}:{remote_log_dir} -> {local_log_dir}")
     try:
@@ -97,6 +95,70 @@ def pull_extra_dirs(host: str, extra_pull_dirs: list, bare: bool = False) -> boo
             print(f"[auto_pull] Warning: Failed to pull extra dir {remote_path}")
             all_success = False
     return all_success
+
+
+def _load_pull_exclude_patterns() -> list:
+    """Load rsync_pull_exclude patterns from chester config. Returns [] on any error."""
+    try:
+        from chester.config_v2 import load_config
+        cfg = load_config()
+        return list(cfg.get("rsync_pull_exclude", []))
+    except Exception:
+        return []
+
+
+def execute_pull_for_job(job: dict, bare: bool = False) -> str:
+    """
+    Check status of one job and pull if complete.
+
+    The caller (CLI) is responsible for deleting or updating the job file
+    based on the returned status.
+
+    rsync path safety: pull_results() appends trailing slashes to both
+    remote_log_dir and local_log_dir so rsync syncs directory *contents*
+    rather than creating a nested subdirectory. Do not remove the trailing
+    slashes from pull_results().
+
+    Failed jobs are not pulled: the job file is marked failed and no rsync
+    is attempted. To retrieve logs from a failed job, use `chester pull`.
+
+    Returns one of: 'pulled', 'pull_failed', 'failed', 'running'.
+    """
+    host = job['host']
+    remote_log_dir = job['remote_log_dir']
+    local_log_dir = job['local_log_dir']
+    exp_name = job.get('exp_name', 'unknown')
+    extra_pull_dirs = job.get('extra_pull_dirs', [])
+
+    exclude_patterns = _load_pull_exclude_patterns()
+    status = check_job_status(job)
+
+    if status == 'done':
+        print(f'[chester] Job completed: {exp_name} on {host}')
+        if pull_results(host, remote_log_dir, local_log_dir, bare=bare,
+                        exclude_patterns=exclude_patterns):
+            pull_extra_dirs(host, extra_pull_dirs, bare=bare)
+            return 'pulled'
+        return 'pull_failed'
+
+    if status == 'done_orphans':
+        print(f'[chester] Job completed with orphan processes: {exp_name} on {host}')
+        pid = get_remote_pid(host, remote_log_dir)
+        if pid:
+            kill_process_tree(host, pid)
+        else:
+            print(f'[chester] Warning: could not read PID for {exp_name} — orphan process may still be running')
+        if pull_results(host, remote_log_dir, local_log_dir, bare=bare,
+                        exclude_patterns=exclude_patterns):
+            pull_extra_dirs(host, extra_pull_dirs, bare=bare)
+            return 'pulled'
+        return 'pull_failed'
+
+    if status == 'failed':
+        print(f'[chester] Job FAILED: {exp_name} on {host} — skipping pull')
+        return 'failed'
+
+    return 'running'
 
 
 def get_remote_pid(host: str, remote_log_dir: str) -> Optional[int]:
@@ -239,139 +301,3 @@ def check_job_status(job: dict) -> str:
         return 'running'
 
 
-def load_manifest(manifest_path: str) -> list:
-    """Load job manifest from JSON file."""
-    if not os.path.exists(manifest_path):
-        return []
-    with open(manifest_path, 'r') as f:
-        return json.load(f)
-
-
-def save_manifest(manifest_path: str, jobs: list):
-    """Save job manifest to JSON file."""
-    os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
-    with open(manifest_path, 'w') as f:
-        json.dump(jobs, f, indent=2)
-
-
-def poll_and_pull(manifest_path: str, poll_interval: int = 60, bare: bool = False, once: bool = False):
-    """
-    Main polling loop. Checks job status and pulls completed/failed jobs.
-
-    Uses PID-based tracking to detect:
-    - Successful completion (.done exists, process exited)
-    - Orphan processes (.done exists, process still running -> kill and pull)
-    - Failed jobs (process died without .done -> pull logs)
-
-    Args:
-        manifest_path: Path to the job manifest JSON file
-        poll_interval: Seconds between polls
-        bare: If True, exclude large files when pulling
-        once: If True, run once and exit instead of looping
-    """
-    print(f"[auto_pull] Starting poller, manifest: {manifest_path}")
-    print(f"[auto_pull] Poll interval: {poll_interval}s, bare mode: {bare}")
-
-    while True:
-        jobs = load_manifest(manifest_path)
-
-        if not jobs:
-            if once:
-                print("[auto_pull] No jobs in manifest, exiting")
-                break
-            time.sleep(poll_interval)
-            continue
-
-        pending_jobs = [j for j in jobs if j.get('status') == 'pending']
-
-        if not pending_jobs:
-            # All jobs resolved - print summary and exit
-            print("[auto_pull] All jobs resolved:")
-            for j in jobs:
-                print(f"  {j.get('exp_name', 'unknown')}: {j.get('status')}")
-            break
-
-        print(f"[auto_pull] Checking {len(pending_jobs)} pending jobs...")
-
-        for job in pending_jobs:
-            host = job['host']
-            remote_log_dir = job['remote_log_dir']
-            local_log_dir = job['local_log_dir']
-            exp_name = job.get('exp_name', 'unknown')
-
-            status = check_job_status(job)
-
-            if status == 'done':
-                print(f"[auto_pull] Job completed: {exp_name} on {host}")
-                if pull_results(host, remote_log_dir, local_log_dir, bare=bare):
-                    # Pull extra directories if configured
-                    pull_extra_dirs(host, job.get('extra_pull_dirs', []), bare=bare)
-                    job['status'] = 'pulled'
-                    job['pulled_at'] = datetime.now().isoformat()
-                    print(f"[auto_pull] Successfully pulled: {local_log_dir}")
-                else:
-                    job['status'] = 'pull_failed'
-                    print(f"[auto_pull] Failed to pull: {exp_name}")
-                save_manifest(manifest_path, jobs)
-
-            elif status == 'done_orphans':
-                print(f"[auto_pull] Job completed with orphan processes: {exp_name} on {host}")
-                pid = get_remote_pid(host, remote_log_dir)
-                if pid:
-                    kill_process_tree(host, pid)
-                if pull_results(host, remote_log_dir, local_log_dir, bare=bare):
-                    # Pull extra directories if configured
-                    pull_extra_dirs(host, job.get('extra_pull_dirs', []), bare=bare)
-                    job['status'] = 'pulled'
-                    job['pulled_at'] = datetime.now().isoformat()
-                    job['had_orphans'] = True
-                    print(f"[auto_pull] Successfully pulled (after cleanup): {local_log_dir}")
-                else:
-                    job['status'] = 'pull_failed'
-                    print(f"[auto_pull] Failed to pull: {exp_name}")
-                save_manifest(manifest_path, jobs)
-
-            elif status == 'failed':
-                print(f"[auto_pull] Job FAILED (process died): {exp_name} on {host}")
-                # Pull logs for debugging (always use bare mode for failed jobs)
-                pull_results(host, remote_log_dir, local_log_dir, bare=True)
-                job['status'] = 'failed'
-                job['failed_at'] = datetime.now().isoformat()
-                print(f"[auto_pull] Pulled logs from failed job: {local_log_dir}")
-                save_manifest(manifest_path, jobs)
-
-            # else: status == 'running' - keep polling
-
-        if once:
-            break
-
-        time.sleep(poll_interval)
-
-
-def main():
-    parser = argparse.ArgumentParser(description='Chester Auto Pull - Background result synchronization')
-    parser.add_argument('--manifest', type=str, required=True,
-                        help='Path to job manifest JSON file')
-    parser.add_argument('--poll-interval', type=int, default=60,
-                        help='Seconds between polls (default: 60)')
-    parser.add_argument('--bare', action='store_true',
-                        help='Exclude large files (*.pkl, *.pth, etc.)')
-    parser.add_argument('--once', action='store_true',
-                        help='Run once and exit instead of continuous polling')
-
-    args = parser.parse_args()
-
-    try:
-        poll_and_pull(
-            manifest_path=args.manifest,
-            poll_interval=args.poll_interval,
-            bare=args.bare,
-            once=args.once
-        )
-    except KeyboardInterrupt:
-        print("\n[auto_pull] Interrupted by user")
-        sys.exit(0)
-
-
-if __name__ == '__main__':
-    main()

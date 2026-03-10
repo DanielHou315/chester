@@ -39,7 +39,7 @@ all = ["boto3", "awscli", "wandb", "tensorboard"]
 dev = ["pytest", "pytest-cov"]
 
 [project.scripts]
-chester-pull = "chester.pull_result:main"
+chester = "chester.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
