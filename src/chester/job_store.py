@@ -33,6 +33,7 @@ def write_job_file(job_store_dir: Path, job: dict) -> str:
     job_id = str(uuid.uuid4())
     data = dict(job)
     data['job_id'] = job_id
+    data['status'] = JOB_STATUS_PENDING
     (job_store_dir / f'{job_id}.json').write_text(json.dumps(data, indent=2))
     return job_id
 
@@ -63,7 +64,12 @@ def load_pending_jobs(job_store_dir: Path, prefix: Optional[str] = None) -> list
 
 
 def mark_job_failed(job_store_dir: Path, job_id: str):
-    """Update job file status to 'failed' in-place. No pull will be attempted."""
+    """Update job file status to 'failed' in-place. No pull will be attempted.
+
+    Note: the read-then-write is not atomic. If the process crashes mid-write the
+    file may be truncated and silently skipped by the loader. This is acceptable
+    (the job is lost, not corrupted) but worth being aware of.
+    """
     path = Path(job_store_dir) / f'{job_id}.json'
     if not path.exists():
         return

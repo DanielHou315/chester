@@ -1,5 +1,6 @@
 # tests/test_job_store.py
 import json
+import uuid
 import pytest
 from pathlib import Path
 from chester.job_store import write_job_file, load_pending_jobs, delete_job_file, mark_job_failed, JOB_STATUS_PENDING, JOB_STATUS_FAILED
@@ -63,7 +64,6 @@ def test_load_pending_jobs_prefix_filter(tmp_path):
 
 
 def test_load_pending_jobs_skips_non_pending(tmp_path):
-    import uuid
     job_id = str(uuid.uuid4())
     path = tmp_path / f'{job_id}.json'
     path.write_text(json.dumps({'status': 'failed', 'job_id': job_id, 'exp_prefix': 'x'}))
@@ -99,7 +99,6 @@ def test_mark_job_failed(tmp_path):
     mark_job_failed(tmp_path, job_id)
     file_path = tmp_path / f'{job_id}.json'
     assert file_path.exists()
-    import json
     data = json.loads(file_path.read_text())
     assert data['status'] == JOB_STATUS_FAILED
     pending = load_pending_jobs(tmp_path)
