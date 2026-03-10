@@ -4,7 +4,9 @@ import unittest.mock as mock
 
 import pytest
 
-from chester.auto_pull import check_slurm_job_status, check_job_status
+from chester.auto_pull import (
+    check_slurm_job_status, check_job_status, execute_pull_for_job
+)
 
 
 def _mock_sacct(stdout, returncode=0, side_effect=None):
@@ -126,3 +128,56 @@ class TestCheckJobStatusIntegration:
         with mock.patch("chester.auto_pull.check_done_marker", return_value=False), \
              mock.patch("chester.auto_pull.check_slurm_job_status", return_value="unknown"):
             assert check_job_status(job) == 'running'
+
+
+class TestExecutePullForJob:
+    def _make_job(self, **overrides):
+        job = {
+            'job_id': 'test-uuid-1234',
+            'host': 'gl',
+            'remote_log_dir': '/remote/logs/exp1',
+            'local_log_dir': '/local/logs/exp1',
+            'exp_name': 'test_exp',
+            'exp_prefix': 'pfx',
+            'extra_pull_dirs': [],
+            'status': 'pending',
+        }
+        job.update(overrides)
+        return job
+
+    def test_done_returns_pulled(self):
+        job = self._make_job()
+        with mock.patch('chester.auto_pull.check_job_status', return_value='done'), \
+             mock.patch('chester.auto_pull.pull_results', return_value=True), \
+             mock.patch('chester.auto_pull.pull_extra_dirs', return_value=True):
+            assert execute_pull_for_job(job) == 'pulled'
+
+    def test_done_pull_failure_returns_pull_failed(self):
+        job = self._make_job()
+        with mock.patch('chester.auto_pull.check_job_status', return_value='done'), \
+             mock.patch('chester.auto_pull.pull_results', return_value=False):
+            assert execute_pull_for_job(job) == 'pull_failed'
+
+    def test_failed_returns_failed_no_pull(self):
+        job = self._make_job()
+        with mock.patch('chester.auto_pull.check_job_status', return_value='failed'), \
+             mock.patch('chester.auto_pull.pull_results') as mock_pull:
+            assert execute_pull_for_job(job) == 'failed'
+        mock_pull.assert_not_called()
+
+    def test_running_returns_running_no_pull(self):
+        job = self._make_job()
+        with mock.patch('chester.auto_pull.check_job_status', return_value='running'), \
+             mock.patch('chester.auto_pull.pull_results') as mock_pull:
+            assert execute_pull_for_job(job) == 'running'
+        mock_pull.assert_not_called()
+
+    def test_done_orphans_kills_and_pulls(self):
+        job = self._make_job()
+        with mock.patch('chester.auto_pull.check_job_status', return_value='done_orphans'), \
+             mock.patch('chester.auto_pull.get_remote_pid', return_value=12345), \
+             mock.patch('chester.auto_pull.kill_process_tree') as mock_kill, \
+             mock.patch('chester.auto_pull.pull_results', return_value=True), \
+             mock.patch('chester.auto_pull.pull_extra_dirs', return_value=True):
+            assert execute_pull_for_job(job) == 'pulled'
+        mock_kill.assert_called_once_with('gl', 12345)
