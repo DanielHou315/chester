@@ -196,31 +196,13 @@ backends:
         chester_dir = self._make_chester_config(tmp_path)
         job_store_dir = tmp_path / "job_store"
 
-        # Redirect job store dir to tmp_path
+        # Redirect job store dir to tmp_path so the real _register_job_for_pull
+        # writes files into a known location without touching the real project dir.
         monkeypatch.setenv("CHESTER_CONFIG_PATH", str(chester_dir / "config.yaml"))
         import chester.job_store as job_store_mod
         monkeypatch.setattr(job_store_mod, "get_default_job_store_dir", lambda: job_store_dir)
 
-        # Also patch inside run_exp's lazy import of get_default_job_store_dir
         import chester.run_exp as run_exp_mod
-
-        def _fake_register(host, remote_log_dir, local_log_dir, exp_name,
-                           exp_prefix, extra_pull_dirs=None, slurm_job_id=None):
-            from chester.job_store import write_job_file, JOB_STATUS_PENDING
-            job = {
-                'host': host,
-                'remote_log_dir': remote_log_dir,
-                'local_log_dir': local_log_dir,
-                'exp_name': exp_name,
-                'exp_prefix': exp_prefix,
-                'extra_pull_dirs': extra_pull_dirs or [],
-                'status': JOB_STATUS_PENDING,
-            }
-            if slurm_job_id is not None:
-                job['slurm_job_id'] = slurm_job_id
-            write_job_file(job_store_dir, job)
-
-        monkeypatch.setattr(run_exp_mod, "_register_job_for_pull", _fake_register)
 
         # Mock the backend submission so we don't actually SSH anywhere
         import chester.backends as backends_mod
@@ -280,3 +262,7 @@ backends:
         assert job_data.get("status") == "pending"
         assert job_data.get("host") is not None
         assert job_data["host"] == "myhost.example.com"
+        assert job_data.get("exp_prefix") == "test_autopull"
+        assert job_data.get("exp_name") is not None and len(job_data["exp_name"]) > 0
+        assert job_data.get("remote_log_dir", "").startswith("/remote/project")
+        assert "local_log_dir" in job_data
