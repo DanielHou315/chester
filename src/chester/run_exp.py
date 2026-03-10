@@ -742,7 +742,7 @@ def run_experiment_lite(
         slurm_overrides=None,
         hydra_enabled=False,
         hydra_flags=None,
-        auto_pull=False,
+        auto_pull=True,
         extra_pull_dirs=None,
         sync_env=None,
         git_snapshot=True,

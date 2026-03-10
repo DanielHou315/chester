@@ -139,6 +139,7 @@ def load_config(search_from: Optional[Path] = None) -> Dict[str, Any]:
             "package_manager": "python",
             "rsync_include": [],
             "rsync_exclude": [],
+            "rsync_pull_exclude": ["last_*.pth"],
             "hydra_config_path": "configs",
             "backends": {"local": BackendConfig(name="local", type="local")},
         }
@@ -187,6 +188,7 @@ def load_config(search_from: Optional[Path] = None) -> Dict[str, Any]:
     # Set defaults for optional fields
     config.setdefault("rsync_include", [])
     config.setdefault("rsync_exclude", [])
+    config.setdefault("rsync_pull_exclude", ["last_*.pth"])
 
     # Parse shared singularity defaults (if any)
     shared_singularity = config.get("singularity")

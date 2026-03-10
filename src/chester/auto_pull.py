@@ -31,8 +31,15 @@ def check_done_marker(host: str, remote_log_dir: str) -> bool:
         return False
 
 
-def pull_results(host: str, remote_log_dir: str, local_log_dir: str, bare: bool = False) -> bool:
-    """Pull results from remote host to local directory."""
+def pull_results(host: str, remote_log_dir: str, local_log_dir: str,
+                 bare: bool = False, exclude_patterns: list = None) -> bool:
+    """Pull results from remote host to local directory.
+
+    Args:
+        exclude_patterns: Additional rsync --exclude patterns (e.g. from
+            rsync_pull_exclude in chester config). Applied in addition to
+            bare-mode excludes.
+    """
     # Create local directory if it doesn't exist
     os.makedirs(os.path.dirname(local_log_dir), exist_ok=True)
 
@@ -48,6 +55,9 @@ def pull_results(host: str, remote_log_dir: str, local_log_dir: str, bare: bool 
             "--exclude", "*.pth",
             "--exclude", "*.pt",
         ])
+
+    for pattern in (exclude_patterns or []):
+        cmd.extend(["--exclude", pattern])
 
     print(f"[auto_pull] Pulling: {host}:{remote_log_dir} -> {local_log_dir}")
     try:
@@ -87,6 +97,16 @@ def pull_extra_dirs(host: str, extra_pull_dirs: list, bare: bool = False) -> boo
     return all_success
 
 
+def _load_pull_exclude_patterns() -> list:
+    """Load rsync_pull_exclude patterns from chester config. Returns [] on any error."""
+    try:
+        from chester.config_v2 import load_config
+        cfg = load_config()
+        return list(cfg.get("rsync_pull_exclude", []))
+    except Exception:
+        return []
+
+
 def execute_pull_for_job(job: dict, bare: bool = False) -> str:
     """
     Check status of one job and pull if complete.
@@ -110,11 +130,13 @@ def execute_pull_for_job(job: dict, bare: bool = False) -> str:
     exp_name = job.get('exp_name', 'unknown')
     extra_pull_dirs = job.get('extra_pull_dirs', [])
 
+    exclude_patterns = _load_pull_exclude_patterns()
     status = check_job_status(job)
 
     if status == 'done':
         print(f'[chester] Job completed: {exp_name} on {host}')
-        if pull_results(host, remote_log_dir, local_log_dir, bare=bare):
+        if pull_results(host, remote_log_dir, local_log_dir, bare=bare,
+                        exclude_patterns=exclude_patterns):
             pull_extra_dirs(host, extra_pull_dirs, bare=bare)
             return 'pulled'
         return 'pull_failed'
@@ -126,7 +148,8 @@ def execute_pull_for_job(job: dict, bare: bool = False) -> str:
             kill_process_tree(host, pid)
         else:
             print(f'[chester] Warning: could not read PID for {exp_name} — orphan process may still be running')
-        if pull_results(host, remote_log_dir, local_log_dir, bare=bare):
+        if pull_results(host, remote_log_dir, local_log_dir, bare=bare,
+                        exclude_patterns=exclude_patterns):
             pull_extra_dirs(host, extra_pull_dirs, bare=bare)
             return 'pulled'
         return 'pull_failed'
