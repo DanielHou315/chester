@@ -34,6 +34,7 @@ class SlurmBackend(Backend):
         slurm_overrides: Optional[Dict[str, Any]] = None,
         hydra_enabled: bool = False,
         hydra_flags: Optional[Dict[str, Any]] = None,
+        sequential_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """Generate a SLURM batch script.
 
@@ -105,18 +106,25 @@ class SlurmBackend(Backend):
         # Create overlay image if needed (before singularity exec).
         lines.extend(self.get_overlay_setup_commands())
 
+        steps = sequential_steps if sequential_steps is not None else [None]
+
         inner: List[str] = []
 
         # Singularity has its own prepare that runs *inside* the container.
         if self.config.singularity:
             inner.extend(self.get_singularity_prepare_commands())
 
-        command = self.build_python_command(
-            params, script, python_command, env, hydra_enabled, hydra_flags,
-        )
-        inner.append(command)
+        for i, step_overrides in enumerate(steps):
+            if len(steps) > 1:
+                inner.append(f"# step {i + 1}/{len(steps)}")
+            command = self.build_python_command(
+                params, script, python_command, env,
+                hydra_enabled, hydra_flags,
+                extra_overrides=step_overrides,
+            )
+            inner.append(command)
 
-        # .done marker
+        # .done marker — written once, after all steps complete
         inner.append(f"touch {log_dir}/.done")
 
         # Singularity wrapping or plain append
