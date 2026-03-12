@@ -1023,7 +1023,11 @@ def run_experiment_lite(
 
             # Singularity wrapping always requires subprocess — in-process
             # hydra execution cannot run inside a container.
-            use_subprocess = launch_with_subprocess or backend.config.singularity
+            # Sequential steps also require subprocess: each step is a separate
+            # process (Isaac Sim can only be initialized once), and Hydra cannot
+            # be initialized twice in the same process.
+            multi_step = sequential_steps is not None and len(sequential_steps) > 1
+            use_subprocess = launch_with_subprocess or backend.config.singularity or multi_step
             if use_subprocess:
                 try:
                     run_env = dict(os.environ, **(merged_env or {}))

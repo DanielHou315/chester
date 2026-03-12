@@ -357,3 +357,43 @@ class TestRunExpSequentialSteps:
             call.kwargs.get("sequential_steps") == steps
             for call in all_calls
         ), "sequential_steps not forwarded to backend"
+
+    def test_multi_step_forces_subprocess(self, tmp_path, monkeypatch):
+        """Multi-step sequential_steps must use subprocess even when launch_with_subprocess=False.
+
+        Hydra can only be initialized once per process, and each step must be a
+        separate Python process (Isaac Sim constraint), so in-process execution
+        is not valid for multi-step runs.
+        """
+        import subprocess
+        from unittest import mock
+        from chester.run_exp import run_experiment_lite
+        from chester.backends.base import BackendConfig
+        monkeypatch.chdir(tmp_path)
+
+        steps = [
+            {"experiment.tasks": ["training"]},
+            {"experiment.tasks": ["evaluate"]},
+        ]
+        mock_backend = mock.MagicMock()
+        mock_backend.config = BackendConfig(name="local", type="local")
+        mock_backend.generate_command.return_value = "echo step1 && echo step2"
+        mock_backend.generate_script.return_value = "#!/bin/bash\necho step1 && echo step2"
+
+        from chester.backends.base import BackendConfig as BC
+        local_cfg = BC(name="local", type="local")
+        with mock.patch("chester.run_exp.load_config", return_value=self._make_mock_cfg(tmp_path)), \
+             mock.patch("chester.run_exp.get_backend", return_value=local_cfg), \
+             mock.patch("chester.run_exp.create_backend", return_value=mock_backend), \
+             mock.patch("chester.run_exp.subprocess.call") as mock_call:
+            variant = {"seed": 1, "chester_first_variant": True, "chester_last_variant": True}
+            run_experiment_lite(
+                script="main", mode="local", variant=variant,
+                sequential_steps=steps, hydra_enabled=True,
+                launch_with_subprocess=False,  # debug mode — would normally go in-process
+                wait_subprocess=True,
+                auto_pull=False,
+            )
+
+        # Must have gone through subprocess.call, not run_hydra_command
+        mock_call.assert_called_once()
