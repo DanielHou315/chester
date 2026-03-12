@@ -124,14 +124,14 @@ class SlurmBackend(Backend):
             )
             inner.append(command)
 
-        # .done marker — written once, after all steps complete
-        inner.append(f"touch {log_dir}/.done")
-
         # Singularity wrapping or plain append
         if self.config.singularity:
             lines.append(self.wrap_with_singularity(inner))
         else:
             lines.extend(inner)
+
+        # .done marker — always on host, after container exits
+        lines.append(f"touch {log_dir}/.done")
 
         return "\n".join(lines) + "\n"
 
