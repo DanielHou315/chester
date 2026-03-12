@@ -122,15 +122,9 @@ def build_hydra_args(
         Args string, e.g. ``"lr=0.01 batch_size=32 --multirun"``.
     """
     variant_data = pickle.loads(base64.b64decode(params["variant_data"]))
-    log_dir = params["log_dir"]
-    variant_data["hydra.run.dir"] = log_dir
+    variant_data["hydra.run.dir"] = params["log_dir"]
     if extra_overrides:
-        resolved = {}
-        for k, v in extra_overrides.items():
-            if isinstance(v, str):
-                v = v.replace("${log_dir}", log_dir)
-            resolved[k] = v
-        variant_data.update(resolved)
+        variant_data.update(extra_overrides)
 
     parts: List[str] = []
 
