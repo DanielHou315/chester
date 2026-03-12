@@ -100,6 +100,7 @@ def variant_to_hydra_overrides(variant: Dict[str, Any]) -> List[str]:
 def build_hydra_args(
     params: Dict[str, Any],
     hydra_flags: Dict[str, Any] = None,
+    extra_overrides: Dict[str, Any] = None,
 ) -> str:
     """Build Hydra override args from a params dict.
 
@@ -113,12 +114,17 @@ def build_hydra_args(
         params: Task parameter dict containing ``variant_data`` (base64-
                 encoded pickled variant) and ``log_dir``.
         hydra_flags: Optional Hydra flags (e.g. ``{'multirun': True}``).
+        extra_overrides: Optional dict of key/value pairs to merge on top of
+                         the decoded variant before formatting.  Existing keys
+                         are replaced; new keys are added.
 
     Returns:
         Args string, e.g. ``"lr=0.01 batch_size=32 --multirun"``.
     """
     variant_data = pickle.loads(base64.b64decode(params["variant_data"]))
     variant_data["hydra.run.dir"] = params["log_dir"]
+    if extra_overrides:
+        variant_data.update(extra_overrides)
 
     parts: List[str] = []
 

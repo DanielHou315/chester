@@ -239,6 +239,7 @@ class Backend(ABC):
         env: Optional[Dict[str, str]] = None,
         hydra_enabled: bool = False,
         hydra_flags: Optional[Dict[str, Any]] = None,
+        extra_overrides: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Build the inner python command string with arguments.
 
@@ -259,6 +260,9 @@ class Backend(ABC):
             hydra_enabled: Use Hydra override format instead of CLI args.
             hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
                          Only used when ``hydra_enabled=True``.
+            extra_overrides: Optional dict of key/value pairs to merge on top
+                             of the variant before formatting Hydra overrides.
+                             Only used when ``hydra_enabled=True``.
 
         Returns:
             The full command string.
@@ -272,7 +276,7 @@ class Backend(ABC):
 
         if hydra_enabled:
             from ..hydra_utils import build_hydra_args
-            args = build_hydra_args(params, hydra_flags)
+            args = build_hydra_args(params, hydra_flags, extra_overrides=extra_overrides)
         else:
             from ..utils import build_cli_args
             args = build_cli_args(params)
