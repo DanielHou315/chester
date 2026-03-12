@@ -297,3 +297,63 @@ class TestLocalSequentialSteps:
         )
         assert " && " in cmd
         assert cmd.count("python -m main") == 2
+
+
+class TestRunExpSequentialSteps:
+    def _make_mock_cfg(self, tmp_path):
+        return {
+            "project_path": str(tmp_path),
+            "log_dir": str(tmp_path / "data"),
+            "rsync_include": [],
+            "rsync_exclude": [],
+            "hydra_config_path": str(tmp_path / "configs"),
+            "backends": {},
+        }
+
+    def test_empty_sequential_steps_raises(self, tmp_path, monkeypatch):
+        import pytest
+        from unittest import mock
+        from chester.run_exp import run_experiment_lite
+        monkeypatch.chdir(tmp_path)
+        with mock.patch("chester.run_exp.load_config", return_value=self._make_mock_cfg(tmp_path)), \
+             mock.patch("chester.run_exp.get_backend"), \
+             mock.patch("chester.run_exp.create_backend"):
+            with pytest.raises(ValueError, match="sequential_steps"):
+                run_experiment_lite(
+                    script="main", mode="local",
+                    variant={"seed": 1},
+                    sequential_steps=[],
+                )
+
+    def test_sequential_steps_forwarded_to_backend(self, tmp_path, monkeypatch):
+        from unittest import mock
+        from chester.run_exp import run_experiment_lite
+        from chester.backends.base import BackendConfig
+        monkeypatch.chdir(tmp_path)
+
+        steps = [
+            {"experiment.tasks": ["training"]},
+            {"experiment.tasks": ["evaluate"]},
+        ]
+        mock_backend = mock.MagicMock()
+        mock_backend.config = BackendConfig(name="local", type="local")
+        mock_backend.generate_command.return_value = "echo ok"
+        mock_backend.submit.return_value = None
+
+        with mock.patch("chester.run_exp.load_config", return_value=self._make_mock_cfg(tmp_path)), \
+             mock.patch("chester.run_exp.get_backend"), \
+             mock.patch("chester.run_exp.create_backend", return_value=mock_backend):
+            variant = {"seed": 1, "chester_first_variant": True, "chester_last_variant": True}
+            run_experiment_lite(
+                script="main", mode="local", variant=variant,
+                sequential_steps=steps, dry=True, hydra_enabled=True,
+            )
+
+        all_calls = (
+            mock_backend.generate_command.call_args_list
+            + mock_backend.generate_script.call_args_list
+        )
+        assert any(
+            call.kwargs.get("sequential_steps") == steps
+            for call in all_calls
+        ), "sequential_steps not forwarded to backend"
