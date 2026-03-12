@@ -16,6 +16,8 @@ import dateutil.tz
 import json
 import shlex
 from . import config
+from chester.config_v2 import load_config, get_backend
+from chester.backends import create_backend
 
 
 # Deprecated modes that are no longer supported
@@ -748,6 +750,7 @@ def run_experiment_lite(
         git_snapshot=True,
         confirm=False,
         fresh=False,
+        sequential_steps: list = None,
         **kwargs):
     """
     Serialize the stubbed method call and run the experiment using the
@@ -796,6 +799,12 @@ def run_experiment_lite(
     if variations is None:
         variations = []
 
+    if sequential_steps is not None and len(sequential_steps) == 0:
+        raise ValueError(
+            "sequential_steps must be None or a non-empty list. "
+            "Pass None (default) for single-step behavior."
+        )
+
     # ----------------------------------------------------------------
     # 1. Reject deprecated modes
     # ----------------------------------------------------------------
@@ -809,9 +818,6 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     # 2. Load config and create backend
     # ----------------------------------------------------------------
-    from chester.config_v2 import load_config, get_backend
-    from chester.backends import create_backend
-
     cfg = load_config()
     backend_config = get_backend(mode, cfg)
     backend = create_backend(backend_config, cfg)
@@ -1007,6 +1013,7 @@ def run_experiment_lite(
                 env=merged_env or None,
                 hydra_enabled=hydra_enabled,
                 hydra_flags=hydra_flags,
+                sequential_steps=sequential_steps,
             )
 
             if print_command:
@@ -1053,6 +1060,7 @@ def run_experiment_lite(
             if backend_config.type == "slurm" and slurm_overrides:
                 gen_kwargs["slurm_overrides"] = slurm_overrides
 
+            gen_kwargs["sequential_steps"] = sequential_steps
             script_content = backend.generate_script(backend_task, **gen_kwargs)
 
             if print_command:

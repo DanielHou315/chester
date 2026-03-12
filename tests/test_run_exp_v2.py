@@ -227,6 +227,8 @@ backends:
         original_create = backends_mod.create_backend
         monkeypatch.setattr(backends_mod, "create_backend",
                             lambda bc, cfg: fake_backend)
+        monkeypatch.setattr(run_exp_mod, "create_backend",
+                            lambda bc, cfg: fake_backend)
 
         # Also stub rsync so it doesn't run
         monkeypatch.setattr(run_exp_mod, "rsync_code_v2", lambda **kw: None)
