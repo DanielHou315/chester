@@ -81,3 +81,85 @@ class TestBuildPythonCommandExtraOverrides:
                 params, "main", hydra_enabled=True, extra_overrides=None
             )
         )
+
+
+class TestSSHSequentialSteps:
+    def _make_task(self, log_dir="/remote/logs/exp1"):
+        return {
+            "params": {**_make_params({"seed": 1, "experiment.tasks": ["training"]}),
+                       "exp_name": "test_exp", "log_dir": log_dir}
+        }
+
+    def _make_backend(self):
+        from chester.backends.ssh import SSHBackend
+        from chester.backends.base import BackendConfig
+        cfg = BackendConfig(
+            name="myhost", type="ssh",
+            host="myhost", remote_dir="/remote/project",
+        )
+        return SSHBackend(cfg, {"package_manager": "python"})
+
+    def test_no_sequential_steps_unchanged(self):
+        backend = self._make_backend()
+        task = self._make_task()
+        script = backend.generate_script(
+            task, script="main", python_command="python -m",
+            hydra_enabled=True, sequential_steps=None,
+        )
+        assert script.count("python -m main") == 1
+        assert ".done" in script
+
+    def test_two_steps_two_commands(self):
+        backend = self._make_backend()
+        task = self._make_task()
+        steps = [
+            {"experiment.tasks": ["training"]},
+            {"experiment.tasks": ["evaluate"]},
+        ]
+        script = backend.generate_script(
+            task, script="main", python_command="python -m",
+            hydra_enabled=True, sequential_steps=steps,
+        )
+        assert script.count("python -m main") == 2
+
+    def test_done_marker_appears_once_after_last_step(self):
+        backend = self._make_backend()
+        task = self._make_task()
+        steps = [
+            {"experiment.tasks": ["training"]},
+            {"experiment.tasks": ["evaluate"]},
+        ]
+        script = backend.generate_script(
+            task, script="main", python_command="python -m",
+            hydra_enabled=True, sequential_steps=steps,
+        )
+        assert script.count(".done") == 1
+        last_cmd_pos = script.rfind("python -m main")
+        done_pos = script.find(".done")
+        assert done_pos > last_cmd_pos
+
+    def test_step_overrides_applied(self):
+        backend = self._make_backend()
+        task = self._make_task()
+        steps = [
+            {"experiment.tasks": ["training"]},
+            {"experiment.tasks": ["evaluate"], "experiment.evaluate.training_dir": "/ckpt"},
+        ]
+        script = backend.generate_script(
+            task, script="main", python_command="python -m",
+            hydra_enabled=True, sequential_steps=steps,
+        )
+        assert "experiment.tasks=[training]" in script
+        assert "experiment.tasks=[evaluate]" in script
+        assert "experiment.evaluate.training_dir=/ckpt" in script
+
+    def test_step_comments_present(self):
+        backend = self._make_backend()
+        task = self._make_task()
+        steps = [{"experiment.tasks": ["training"]}, {"experiment.tasks": ["evaluate"]}]
+        script = backend.generate_script(
+            task, script="main", python_command="python -m",
+            hydra_enabled=True, sequential_steps=steps,
+        )
+        assert "# step 1/2" in script
+        assert "# step 2/2" in script
