@@ -48,6 +48,17 @@ class TestBuildHydraArgsExtraOverrides:
         params = _make_params({"seed": 1})
         assert build_hydra_args(params) == build_hydra_args(params, extra_overrides={})
 
+    def test_log_dir_token_substituted_in_extra_overrides(self):
+        """${log_dir} in step overrides must expand to the actual log directory path."""
+        from chester.hydra_utils import build_hydra_args
+        params = _make_params({"seed": 1}, log_dir="/logs/my_exp")
+        result = build_hydra_args(
+            params,
+            extra_overrides={"experiment.evaluate.training_dir": "${log_dir}"},
+        )
+        assert "experiment.evaluate.training_dir=/logs/my_exp" in result
+        assert "${log_dir}" not in result
+
 
 class TestBuildPythonCommandExtraOverrides:
     def _make_backend(self):
