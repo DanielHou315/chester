@@ -302,9 +302,14 @@ class VariantGenerator(dict):
     def derive(self, key, fn):
         """Register a derived parameter computed from the full variant dict.
 
-        Unlike vg.add(key, lambda dep: [...]), the function here receives the
-        entire variant dict and returns a single concrete value.  This allows
-        referencing dotted keys that are invalid Python identifiers::
+        Unlike ``vg.add(key, lambda dep: [...])``, the function receives the
+        entire variant dict and returns a **single concrete value** (not a list).
+        This is the right tool when a parameter is fully determined by other
+        parameters rather than being an independent sweep axis.
+
+        The primary use case is bypassing OmegaConf ``${eval:...}`` expressions
+        that fail when nested — derived keys are passed as concrete Hydra CLI
+        overrides, so the YAML expression is never evaluated::
 
             vg.add("experiment.training.env.num_train_sim", [127, 1])
             vg.derive(
@@ -318,10 +323,36 @@ class VariantGenerator(dict):
                           else 1.0,
             )
 
-        Derivations are applied in registration order after all base variants
-        are expanded, so later derivations can reference keys set by earlier ones.
-        Derived keys are included as concrete Hydra overrides in the generated
-        command, bypassing OmegaConf eval expressions in the YAML.
+        Dotted keys (e.g. ``"experiment.training.env.num_train_sim"``) work
+        naturally because ``fn`` indexes the dict with string keys rather than
+        using Python attribute access.
+
+        **Ordering**: derivations are applied in registration order after all
+        base variants are expanded.  A derivation can safely reference any key
+        set by ``vg.add()`` or by an *earlier* ``vg.derive()`` call.
+
+        **Limitations**:
+
+        - *No cycle detection*. Two patterns produce incorrect results silently
+          or loudly:
+
+          1. ``derive("A", fn_A)`` references key ``"B"`` before ``derive("B",
+             fn_B)`` is registered → ``KeyError`` at ``vg.variants()`` time if
+             ``"B"`` was not also set by ``vg.add()``.
+
+          2. ``derive("A", ...)`` registered *after* ``derive("B", ...)`` where
+             ``fn_B`` reads ``"A"`` → ``fn_B`` sees the *old* value of ``"A"``
+             (from ``vg.add()``), then ``fn_A`` overwrites it with a new value.
+             No error is raised; the final variant is silently inconsistent.
+
+          Rule of thumb: register derivations in dependency order — if B
+          depends on A, call ``vg.derive("A", ...)`` before
+          ``vg.derive("B", ...)``.
+
+        - *Derived keys do not appear in* ``vg.variations()``, so they are not
+          factored into the experiment name hash. If two variants differ only in
+          derived values they will get the same experiment directory name.
+          Override ``exp_name`` explicitly in the launcher loop if this matters.
         """
         self._derivations.append((key, fn))
 

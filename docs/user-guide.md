@@ -321,6 +321,58 @@ vg.add("hidden_dim", lambda batch_size: [batch_size * 2])
 # batch_size=128 -> hidden_dim=256
 ```
 
+### Derived Parameters (`vg.derive`)
+
+Use `vg.derive()` when a parameter is fully determined by other parameters
+rather than being an independent sweep axis.  Unlike the lambda form of
+`vg.add()`, `derive()` receives the **entire variant dict** and returns a
+**single concrete value** — not a list.  This makes dotted Hydra keys work
+naturally:
+
+```python
+vg.add("experiment.training.env.num_train_sim", [127, 1])
+
+# num_train_real = 128 - num_train_sim (always 128 total envs)
+vg.derive(
+    "experiment.training.env.num_train_real",
+    lambda v: 128 - v["experiment.training.env.num_train_sim"],
+)
+
+# asset scales depend on which side has more envs
+vg.derive(
+    "experiment.training.env.sim_fixed_asset_scale",
+    lambda v: 2.0 if v["experiment.training.env.num_train_sim"]
+                   > v["experiment.training.env.num_train_real"]
+              else 1.0,
+)
+```
+
+Derived keys are passed as **concrete Hydra CLI overrides**, bypassing any
+`${eval:...}` expressions in the YAML.  This is the recommended fix when
+nested OmegaConf eval expressions fail to resolve.
+
+**Ordering rules:**
+
+Derivations are applied in registration order after all base variants are
+expanded.  Register them in dependency order — if B depends on A, call
+`vg.derive("A", ...)` before `vg.derive("B", ...)`.
+
+**Limitations:**
+
+| Situation | Result |
+|-----------|--------|
+| `derive("A", fn)` reads key `"B"` before `derive("B", ...)` is registered, and `"B"` was never `add()`'d | `KeyError` at `vg.variants()` time |
+| `derive("A", fn)` reads key `"B"` before `derive("B", ...)`, but `"B"` was set by `vg.add()` | `fn` sees the original `add()` value; later `derive("B", ...)` overwrites it — **silently inconsistent** |
+| `derive("A", fn_A)` and `derive("B", fn_B)` each read the other's key | No infinite loop, but one of the two sees a stale value depending on registration order |
+
+There is no automatic cycle detection.  Circular derivations produce either a
+`KeyError` or a silently wrong value.
+
+Derived keys are **not** included in `vg.variations()`, so they don't
+contribute to the experiment name hash.  If two variants differ only in derived
+values, they will share the same output directory name — set `exp_name`
+explicitly in the launcher loop if that matters.
+
 ### Hidden Parameters
 
 Parameters can be hidden from the experiment name:
