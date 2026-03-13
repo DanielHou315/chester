@@ -362,6 +362,9 @@ class Backend(ABC):
             image = os.path.join(project_path, image)
         parts.append(image)
 
-        inner = " && ".join(commands)
+        # Filter out comment-only lines — they break && joining because
+        # bash treats everything after # as a comment to end-of-line.
+        executable = [c for c in commands if not c.lstrip().startswith("#")]
+        inner = " && ".join(executable)
         parts.extend(["/bin/bash", "-c", shlex.quote(inner)])
         return " ".join(parts)

@@ -108,27 +108,36 @@ class SlurmBackend(Backend):
 
         steps = sequential_steps if sequential_steps is not None else [None]
 
-        inner: List[str] = []
-
-        # Singularity has its own prepare that runs *inside* the container.
-        if self.config.singularity:
-            inner.extend(self.get_singularity_prepare_commands())
-
-        for i, step_overrides in enumerate(steps):
-            if len(steps) > 1:
-                inner.append(f"# step {i + 1}/{len(steps)}")
-            command = self.build_python_command(
-                params, script, python_command, env,
-                hydra_enabled, hydra_flags,
-                extra_overrides=step_overrides,
-            )
-            inner.append(command)
-
-        # Singularity wrapping or plain append
-        if self.config.singularity:
-            lines.append(self.wrap_with_singularity(inner))
+        # When using singularity with multiple steps, each step gets its own
+        # `singularity exec` invocation.  Isaac Sim (and other GPU-heavy
+        # runtimes) don't cleanly release CUDA resources when a process exits,
+        # so launching a second instance inside the same container session
+        # fails with "no suitable CUDA GPU was found".
+        if self.config.singularity and len(steps) > 1:
+            sing_prepare = self.get_singularity_prepare_commands()
+            for i, step_overrides in enumerate(steps):
+                command = self.build_python_command(
+                    params, script, python_command, env,
+                    hydra_enabled, hydra_flags,
+                    extra_overrides=step_overrides,
+                )
+                inner = list(sing_prepare) + [command]
+                lines.append(self.wrap_with_singularity(inner))
         else:
-            lines.extend(inner)
+            inner: List[str] = []
+            if self.config.singularity:
+                inner.extend(self.get_singularity_prepare_commands())
+            for i, step_overrides in enumerate(steps):
+                command = self.build_python_command(
+                    params, script, python_command, env,
+                    hydra_enabled, hydra_flags,
+                    extra_overrides=step_overrides,
+                )
+                inner.append(command)
+            if self.config.singularity:
+                lines.append(self.wrap_with_singularity(inner))
+            else:
+                lines.extend(inner)
 
         # .done marker — always on host, after container exits
         lines.append(f"touch {log_dir}/.done")
