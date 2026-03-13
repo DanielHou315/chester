@@ -280,6 +280,7 @@ class VariantGenerator(dict):
 
     def __init__(self):
         self._variants = []
+        self._derivations = []
         self._populate_variants()
         self._hidden_keys = []
         for k, vs, cfg in self._variants:
@@ -297,6 +298,32 @@ class VariantGenerator(dict):
 
     def add(self, key, vals, **kwargs):
         self._variants.append((key, vals, kwargs))
+
+    def derive(self, key, fn):
+        """Register a derived parameter computed from the full variant dict.
+
+        Unlike vg.add(key, lambda dep: [...]), the function here receives the
+        entire variant dict and returns a single concrete value.  This allows
+        referencing dotted keys that are invalid Python identifiers::
+
+            vg.add("experiment.training.env.num_train_sim", [127, 1])
+            vg.derive(
+                "experiment.training.env.num_train_real",
+                lambda v: 128 - v["experiment.training.env.num_train_sim"],
+            )
+            vg.derive(
+                "experiment.training.env.sim_fixed_asset_scale",
+                lambda v: 2.0 if v["experiment.training.env.num_train_sim"]
+                               > v["experiment.training.env.num_train_real"]
+                          else 1.0,
+            )
+
+        Derivations are applied in registration order after all base variants
+        are expanded, so later derivations can reference keys set by earlier ones.
+        Derived keys are included as concrete Hydra overrides in the generated
+        command, bypassing OmegaConf eval expressions in the YAML.
+        """
+        self._derivations.append((key, fn))
 
     def update(self, key, vals, **kwargs):
         for i, (k, _, _) in enumerate(self._variants):
@@ -328,6 +355,9 @@ class VariantGenerator(dict):
             np.random.shuffle(ret)
         # ret = list(map(self.variant_dict, ret))
         ret = list(map(AttrDict, ret))
+        for variant in ret:
+            for key, fn in self._derivations:
+                variant[key] = fn(variant)
         ret[0]['chester_first_variant'] = True
         ret[-1]['chester_last_variant'] = True
         return ret

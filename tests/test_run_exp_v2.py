@@ -268,3 +268,52 @@ backends:
         assert job_data.get("exp_name") is not None and len(job_data["exp_name"]) > 0
         assert job_data.get("remote_log_dir", "").startswith("/remote/project")
         assert "local_log_dir" in job_data
+
+
+class TestVariantGeneratorDerive:
+    def test_derive_computes_value_from_variant(self):
+        from chester.run_exp import VariantGenerator
+        vg = VariantGenerator()
+        vg.add("num_train_sim", [127])
+        vg.derive("num_train_real", lambda v: 128 - v["num_train_sim"])
+        variants = vg.variants()
+        assert variants[0]["num_train_real"] == 1
+
+    def test_derive_applied_to_all_variants(self):
+        from chester.run_exp import VariantGenerator
+        vg = VariantGenerator()
+        vg.add("num_train_sim", [127, 63, 1])
+        vg.derive("num_train_real", lambda v: 128 - v["num_train_sim"])
+        for vv in vg.variants():
+            assert vv["num_train_sim"] + vv["num_train_real"] == 128
+
+    def test_derive_chain_later_can_reference_earlier(self):
+        from chester.run_exp import VariantGenerator
+        vg = VariantGenerator()
+        vg.add("num_train_sim", [127, 1])
+        vg.derive("num_train_real", lambda v: 128 - v["num_train_sim"])
+        vg.derive("sim_scale", lambda v: 2.0 if v["num_train_sim"] > v["num_train_real"] else 1.0)
+        variants = vg.variants()
+        assert variants[0]["sim_scale"] == 2.0  # 127 > 1
+        assert variants[1]["sim_scale"] == 1.0  # 1 < 127
+
+    def test_derive_dotted_keys(self):
+        from chester.run_exp import VariantGenerator
+        vg = VariantGenerator()
+        vg.add("experiment.training.env.num_train_sim", [127])
+        vg.derive(
+            "experiment.training.env.num_train_real",
+            lambda v: 128 - v["experiment.training.env.num_train_sim"],
+        )
+        variants = vg.variants()
+        assert variants[0]["experiment.training.env.num_train_real"] == 1
+
+    def test_derive_does_not_affect_base_sweep(self):
+        from chester.run_exp import VariantGenerator
+        vg = VariantGenerator()
+        vg.add("seed", [1, 2])
+        vg.derive("doubled", lambda v: v["seed"] * 2)
+        variants = vg.variants()
+        assert len(variants) == 2
+        assert variants[0]["doubled"] == 2
+        assert variants[1]["doubled"] == 4
