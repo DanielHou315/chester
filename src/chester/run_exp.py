@@ -473,6 +473,28 @@ class VariantGenerator(dict):
         for variant in ret:
             for key, fn in self._derivations:
                 variant[key] = fn(variant)
+
+        # Sequential dependency metadata
+        seq_keys = self.get_sequential_keys()
+
+        # Reject randomized=True when sequential keys exist
+        if seq_keys and randomized:
+            raise ValueError(
+                "variants(randomized=True) cannot be used with sequential fields. "
+                "Sequential dependencies require deterministic variant ordering."
+            )
+
+        if seq_keys:
+            dep_map = self.get_dependency_map(ret)
+            all_keys = [k for k, _, _ in self._variants]
+            for i, v in enumerate(ret):
+                identity = tuple((k, v.get(k)) for k in all_keys)
+                v["_chester_seq_identity"] = identity
+                v["_chester_pred_identities"] = [
+                    tuple((k, ret[j].get(k)) for k in all_keys)
+                    for j in dep_map.get(i, [])
+                ]
+
         ret[0]['chester_first_variant'] = True
         ret[-1]['chester_last_variant'] = True
         return ret

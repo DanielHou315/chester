@@ -102,3 +102,42 @@ class TestDependencyMap:
         assert find("prep") not in dep_map
         assert dep_map[find("train")] == [find("prep")]
         assert dep_map[find("eval")] == [find("train")]
+
+
+class TestVariantSequentialMetadata:
+    def test_variants_carry_seq_identity(self):
+        vg = VariantGenerator()
+        vg.add("task", ["training", "evaluate"], sequential=True)
+        vg.add("seed", [1, 2])
+        variants = vg.variants()
+        for v in variants:
+            assert "_chester_seq_identity" in v
+            assert isinstance(v["_chester_seq_identity"], tuple)
+
+    def test_variants_carry_pred_identities(self):
+        vg = VariantGenerator()
+        vg.add("task", ["training", "evaluate"], sequential=True)
+        vg.add("seed", [1, 2])
+        variants = vg.variants()
+        for v in variants:
+            assert "_chester_pred_identities" in v
+
+        for v in variants:
+            if v["task"] == "training":
+                assert v["_chester_pred_identities"] == []
+            else:
+                assert len(v["_chester_pred_identities"]) == 1
+
+    def test_no_seq_metadata_when_no_sequential(self):
+        vg = VariantGenerator()
+        vg.add("lr", [0.01, 0.1])
+        variants = vg.variants()
+        for v in variants:
+            assert "_chester_seq_identity" not in v
+            assert "_chester_pred_identities" not in v
+
+    def test_randomized_with_sequential_raises(self):
+        vg = VariantGenerator()
+        vg.add("task", ["training", "evaluate"], sequential=True)
+        with pytest.raises(ValueError, match="randomized"):
+            vg.variants(randomized=True)
