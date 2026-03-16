@@ -211,16 +211,20 @@ def monitor_processes(active_processes, max_processes=2, sleep_time=1):
 
     return active_processes
 
-def query_yes_no(question, default="yes"):
-    """Ask a yes/no question via raw_input() and return their answer.
+def confirm_action(message: str, default: str = "yes", skip: bool = False) -> bool:
+    """Prompt the user for yes/no confirmation.
 
-    "question" is a string that is presented to the user.
-    "default" is the presumed answer if the user just hits <Enter>.
-        It must be "yes" (the default), "no" or None (meaning
-        an answer is required of the user).
+    Args:
+        message: The question to display.
+        default: Presumed answer on empty input ("yes", "no", or None for required).
+        skip: If True, return True without prompting.
 
-    The "answer" return value is True for "yes" or False for "no".
+    Returns:
+        True if confirmed, False if denied.
     """
+    if skip:
+        return True
+
     valid = {"yes": True, "y": True, "ye": True,
              "no": False, "n": False}
     if default is None:
@@ -230,11 +234,10 @@ def query_yes_no(question, default="yes"):
     elif default == "no":
         prompt = " [y/N] "
     else:
-        raise ValueError("invalid default answer: '%s'" % default)
+        raise ValueError(f"invalid default answer: '{default}'")
 
     while True:
-        sys.stdout.write(question + prompt)
-        choice = input().lower()
+        choice = input(message + prompt).lower()
         if default is not None and choice == '':
             return valid[default]
         elif choice in valid:
@@ -242,6 +245,13 @@ def query_yes_no(question, default="yes"):
         else:
             sys.stdout.write("Please respond with 'yes' or 'no' "
                              "(or 'y' or 'n').\n")
+
+
+def query_yes_no(question, default="yes"):
+    """Deprecated: use confirm_action() instead."""
+    import warnings
+    warnings.warn("query_yes_no() is deprecated, use confirm_action()", DeprecationWarning, stacklevel=2)
+    return confirm_action(question, default=default)
 
 
 
@@ -728,9 +738,7 @@ def _fresh_start_v2(
                   f"{total_remote_pt} pt/pth files")
 
     print()
-    print("WARNING: This will permanently delete ALL directories listed above.")
-    answer = input("Type 'yes' or 'y' to confirm: ").strip().lower()
-    if answer not in ('yes', 'y'):
+    if not confirm_action("WARNING: This will permanently delete ALL directories listed above."):
         print("Aborted.")
         sys.exit(0)
 
@@ -1023,9 +1031,11 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     # 7. Confirm for remote (non-dry) runs
     # ----------------------------------------------------------------
-    if is_remote and not remote_confirmed and not dry and not confirm:
-        remote_confirmed = query_yes_no(
-            "Running in (non-dry) mode %s. Confirm?" % mode)
+    if is_remote and not remote_confirmed and not dry:
+        remote_confirmed = confirm_action(
+            f"Running in (non-dry) mode {mode}. Confirm?",
+            skip=confirm,
+        )
         if not remote_confirmed:
             sys.exit(1)
 
