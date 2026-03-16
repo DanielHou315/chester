@@ -18,7 +18,6 @@ class LocalBackend(Backend):
         env: Optional[Dict[str, str]] = None,
         hydra_enabled: bool = False,
         hydra_flags: Optional[Dict[str, Any]] = None,
-        sequential_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """Generate the shell command string for a task.
 
@@ -29,24 +28,15 @@ class LocalBackend(Backend):
             env: Optional env vars to prepend (``KEY=VAL``).
             hydra_enabled: Use Hydra override format for args.
             hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
-            sequential_steps: Optional list of per-step override dicts.
-                              When provided, one command is generated per
-                              step and joined with `` && ``.
 
         Returns:
             The full command string.
         """
         params = task.get("params", {})
-        steps = sequential_steps if sequential_steps is not None else [None]
-        commands = [
-            self.build_python_command(
-                params, script, python_command, env,
-                hydra_enabled, hydra_flags,
-                extra_overrides=step_overrides,
-            )
-            for step_overrides in steps
-        ]
-        command = " && ".join(commands)
+        command = self.build_python_command(
+            params, script, python_command, env,
+            hydra_enabled, hydra_flags,
+        )
 
         # Host prepare always runs on the host (e.g. direnv, module loads).
         host_parts: List[str] = list(self.get_prepare_commands())
@@ -74,7 +64,6 @@ class LocalBackend(Backend):
         env: Optional[Dict[str, str]] = None,
         hydra_enabled: bool = False,
         hydra_flags: Optional[Dict[str, Any]] = None,
-        sequential_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """Generate a full bash script for local execution.
 
@@ -88,9 +77,6 @@ class LocalBackend(Backend):
             env: Optional env vars.
             hydra_enabled: Use Hydra override format for args.
             hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
-            sequential_steps: Optional list of per-step override dicts.
-                              When provided, one command is generated per
-                              step and appended sequentially to the script.
 
         Returns:
             Full bash script as a string.
@@ -108,22 +94,17 @@ class LocalBackend(Backend):
         lines.extend(self.get_overlay_setup_commands())
 
         params = task.get("params", {})
-        steps = sequential_steps if sequential_steps is not None else [None]
-        commands = [
-            self.build_python_command(
-                params, script, python_command, env,
-                hydra_enabled, hydra_flags,
-                extra_overrides=step_overrides,
-            )
-            for step_overrides in steps
-        ]
+        command = self.build_python_command(
+            params, script, python_command, env,
+            hydra_enabled, hydra_flags,
+        )
 
         if self.config.singularity:
             inner: List[str] = list(self.get_singularity_prepare_commands())
-            inner.extend(commands)
+            inner.append(command)
             lines.append(self.wrap_with_singularity(inner))
         else:
-            lines.extend(commands)
+            lines.append(command)
 
         return "\n".join(lines) + "\n"
 

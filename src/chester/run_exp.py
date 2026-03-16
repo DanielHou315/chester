@@ -819,7 +819,6 @@ def run_experiment_lite(
         git_snapshot=True,
         confirm=False,
         fresh=False,
-        sequential_steps: list = None,
         **kwargs):
     """
     Serialize the stubbed method call and run the experiment using the
@@ -867,12 +866,6 @@ def run_experiment_lite(
         env = {}
     if variations is None:
         variations = []
-
-    if sequential_steps is not None and len(sequential_steps) == 0:
-        raise ValueError(
-            "sequential_steps must be None or a non-empty list. "
-            "Pass None (default) for single-step behavior."
-        )
 
     # ----------------------------------------------------------------
     # 1. Reject deprecated modes
@@ -1084,7 +1077,6 @@ def run_experiment_lite(
                 env=merged_env or None,
                 hydra_enabled=hydra_enabled,
                 hydra_flags=hydra_flags,
-                sequential_steps=sequential_steps,
             )
 
             if print_command:
@@ -1094,11 +1086,7 @@ def run_experiment_lite(
 
             # Singularity wrapping always requires subprocess — in-process
             # hydra execution cannot run inside a container.
-            # Sequential steps also require subprocess: each step is a separate
-            # process (Isaac Sim can only be initialized once), and Hydra cannot
-            # be initialized twice in the same process.
-            multi_step = sequential_steps is not None and len(sequential_steps) > 1
-            use_subprocess = launch_with_subprocess or backend.config.singularity or multi_step
+            use_subprocess = launch_with_subprocess or backend.config.singularity
             if use_subprocess:
                 try:
                     run_env = dict(os.environ, **(merged_env or {}))
@@ -1135,7 +1123,6 @@ def run_experiment_lite(
             if backend_config.type == "slurm" and slurm_overrides:
                 gen_kwargs["slurm_overrides"] = slurm_overrides
 
-            gen_kwargs["sequential_steps"] = sequential_steps
             script_content = backend.generate_script(backend_task, **gen_kwargs)
 
             if print_command:
