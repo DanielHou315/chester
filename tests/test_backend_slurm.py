@@ -228,3 +228,64 @@ def test_slurm_script_wraps_python_for_uv():
     task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
     script = backend.generate_script(task, script="train.py")
     assert "uv run python" in script
+
+
+class TestSlurmDependency:
+    def test_submit_with_dependency_ids(self, tmp_path, monkeypatch):
+        """submit() should pass --dependency=afterok:id1:id2 to sbatch."""
+        backend = _make_backend()
+        task = {
+            "params": {"log_dir": "/remote/logs/exp1", "exp_name": "test_job"},
+            "_local_log_dir": str(tmp_path / "local_logs"),
+        }
+
+        captured_commands = []
+
+        def fake_run(cmd, **kwargs):
+            captured_commands.append(cmd)
+            result = type('Result', (), {
+                'returncode': 0,
+                'stdout': 'Submitted batch job 12345\n',
+                'stderr': '',
+            })()
+            return result
+
+        monkeypatch.setattr("chester.backends.slurm.subprocess.run", fake_run)
+
+        job_id = backend.submit(
+            task, "#!/bin/bash\necho hi\n",
+            dependency_job_ids=[100, 200],
+        )
+
+        # Find the sbatch command
+        sbatch_cmd = [c for c in captured_commands if any("sbatch" in str(x) for x in c)]
+        assert len(sbatch_cmd) == 1
+        sbatch_str = " ".join(str(x) for x in sbatch_cmd[0])
+        assert "--dependency=afterok:100:200" in sbatch_str
+
+    def test_submit_without_dependency(self, tmp_path, monkeypatch):
+        """submit() without dependency_job_ids should not add --dependency."""
+        backend = _make_backend()
+        task = {
+            "params": {"log_dir": "/remote/logs/exp1", "exp_name": "test_job"},
+            "_local_log_dir": str(tmp_path / "local_logs"),
+        }
+
+        captured_commands = []
+
+        def fake_run(cmd, **kwargs):
+            captured_commands.append(cmd)
+            result = type('Result', (), {
+                'returncode': 0,
+                'stdout': 'Submitted batch job 12345\n',
+                'stderr': '',
+            })()
+            return result
+
+        monkeypatch.setattr("chester.backends.slurm.subprocess.run", fake_run)
+
+        backend.submit(task, "#!/bin/bash\necho hi\n")
+
+        sbatch_cmd = [c for c in captured_commands if any("sbatch" in str(x) for x in c)]
+        sbatch_str = " ".join(str(x) for x in sbatch_cmd[0])
+        assert "--dependency" not in sbatch_str

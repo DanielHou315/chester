@@ -131,6 +131,7 @@ class SlurmBackend(Backend):
         task: Dict[str, Any],
         script_content: str,
         dry: bool = False,
+        dependency_job_ids: Optional[List[int]] = None,
     ) -> Optional[int]:
         """Submit a SLURM batch job.
 
@@ -178,10 +179,17 @@ class SlurmBackend(Backend):
         )
 
         # 4. Submit via sbatch
+        sbatch_cmd = f"sbatch"
+        if dependency_job_ids:
+            dep_str = ":".join(str(jid) for jid in dependency_job_ids)
+            sbatch_cmd += f" --dependency=afterok:{dep_str}"
+            print(f"[chester] Job depends on SLURM jobs: {dependency_job_ids}")
+        sbatch_cmd += f" {shlex.quote(remote_script)}"
+
         print(f"[chester] Submitting SLURM job on {host}: {exp_name}")
         print(f"[chester] Remote script: {remote_script}")
         result = subprocess.run(
-            ["ssh", host, f"sbatch {shlex.quote(remote_script)}"],
+            ["ssh", host, sbatch_cmd],
             capture_output=True,
             text=True,
         )
