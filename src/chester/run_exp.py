@@ -879,6 +879,8 @@ def _fresh_start_v2(
 
 exp_count = -2
 sub_process_popens = []
+# Module-level registry: (exp_prefix, seq_identity) -> slurm_job_id
+_slurm_job_registry: dict = {}
 now = datetime.datetime.now(dateutil.tz.tzlocal())
 timestamp = now.strftime('%m_%d_%H_%M')
 remote_confirmed = False
@@ -915,6 +917,7 @@ def run_experiment_lite(
         git_snapshot=True,
         confirm=False,
         fresh=False,
+        skip_dependency_check=False,
         **kwargs):
     """
     Serialize the stubbed method call and run the experiment using the
@@ -1006,6 +1009,27 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     last_variant = variant.pop('chester_last_variant', False)
     first_variant = variant.pop('chester_first_variant', False)
+    seq_identity = variant.pop("_chester_seq_identity", None)
+    pred_identities = variant.pop("_chester_pred_identities", None)
+
+    # ----------------------------------------------------------------
+    # 4.1. Clear dependency registry on first variant
+    # ----------------------------------------------------------------
+    if first_variant:
+        _slurm_job_registry.clear()
+
+    # ----------------------------------------------------------------
+    # 4.2. Sequential dependency check (non-SLURM guard)
+    # ----------------------------------------------------------------
+    has_sequential = "_chester_seq_identity" in variant or seq_identity is not None
+
+    if has_sequential and backend_config.type != "slurm" and not skip_dependency_check:
+        raise ValueError(
+            "[chester] sequential dependencies (sequential=True in vg.add()) "
+            f"are only enforced on SLURM backends. Current mode: '{mode}'.\n"
+            "Pass skip_dependency_check=True to run_experiment_lite() "
+            "to suppress this check when you deliberately want unordered execution."
+        )
 
     local_batch_dir = os.path.join(cfg_log_dir, sub_dir, exp_prefix)
 
@@ -1232,8 +1256,29 @@ def run_experiment_lite(
                 with open(os.path.join(local_exp_dir, script_name), 'w') as f:
                     f.write(script_content)
 
+            # Resolve sequential dependency job IDs
+            dependency_job_ids = None
+            if backend_config.type == "slurm" and pred_identities:
+                dependency_job_ids = []
+                for pred_identity in pred_identities:
+                    jid = _slurm_job_registry.get((exp_prefix, pred_identity))
+                    if jid is not None:
+                        dependency_job_ids.append(jid)
+                    else:
+                        print(f"[chester] Warning: predecessor job not found in registry "
+                              f"for identity {pred_identity}. Submitting without this dependency.")
+                if not dependency_job_ids:
+                    dependency_job_ids = None
+
             # Submit via backend
-            submit_result = backend.submit(backend_task, script_content, dry=dry)
+            submit_kwargs = {"dry": dry}
+            if dependency_job_ids:
+                submit_kwargs["dependency_job_ids"] = dependency_job_ids
+            submit_result = backend.submit(backend_task, script_content, **submit_kwargs)
+
+            # Register job ID in sequential dependency registry
+            if backend_config.type == "slurm" and seq_identity is not None and submit_result is not None:
+                _slurm_job_registry[(exp_prefix, seq_identity)] = submit_result
 
             # Register job in persistent job store
             if auto_pull and not dry:
