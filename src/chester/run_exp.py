@@ -465,6 +465,14 @@ class VariantGenerator(dict):
         return ret
 
     def variants(self, randomized=False):
+        # Reject randomized=True when sequential keys exist (check early)
+        seq_keys = self.get_sequential_keys()
+        if seq_keys and randomized:
+            raise ValueError(
+                "variants(randomized=True) cannot be used with sequential fields. "
+                "Sequential dependencies require deterministic variant ordering."
+            )
+
         ret = list(self.ivariants())
         if randomized:
             np.random.shuffle(ret)
@@ -473,16 +481,6 @@ class VariantGenerator(dict):
         for variant in ret:
             for key, fn in self._derivations:
                 variant[key] = fn(variant)
-
-        # Sequential dependency metadata
-        seq_keys = self.get_sequential_keys()
-
-        # Reject randomized=True when sequential keys exist
-        if seq_keys and randomized:
-            raise ValueError(
-                "variants(randomized=True) cannot be used with sequential fields. "
-                "Sequential dependencies require deterministic variant ordering."
-            )
 
         if seq_keys:
             dep_map = self.get_dependency_map(ret)
@@ -1021,7 +1019,7 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     # 4.2. Sequential dependency check (non-SLURM guard)
     # ----------------------------------------------------------------
-    has_sequential = "_chester_seq_identity" in variant or seq_identity is not None
+    has_sequential = seq_identity is not None
 
     if has_sequential and backend_config.type != "slurm" and not skip_dependency_check:
         raise ValueError(
