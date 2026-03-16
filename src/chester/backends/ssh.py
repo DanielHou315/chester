@@ -111,8 +111,8 @@ class SSHBackend(Backend):
                 inner.append(command)
             if self.config.singularity:
                 lines.append(self.wrap_with_singularity(inner))
-        else:
-            lines.extend(inner)
+            else:
+                lines.extend(inner)
 
         # .done marker — always on host, after container exits
         lines.append(f"touch {log_dir}/.done")
