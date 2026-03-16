@@ -468,12 +468,52 @@ Hide a parameter from the auto-generated experiment name:
 vg.add('seed', [1, 2, 3], hide=True)
 ```
 
+### Sequential Dependencies (SLURM only)
+
+Mark a parameter as `sequential=True` to create SLURM job dependency chains.
+Jobs for later values in the list will only start after the preceding value's
+job completes successfully (via `sbatch --dependency=afterok:<jobid>`).
+
+```python
+vg = VariantGenerator()
+vg.add("task", ["training", "evaluate"], sequential=True)
+vg.add("seed", [1, 2, 3])
+
+for v in vg.variants():
+    run_experiment_lite(
+        stub_method_call=run_task,
+        variant=v,
+        mode="gl",          # must be a SLURM backend
+        exp_prefix="my_exp",
+    )
+# For each seed: evaluate waits for training to finish
+```
+
+**Multiple sequential fields** create per-field independent chains:
+
+```python
+vg.add("task", ["training", "evaluate"], sequential=True)
+vg.add("phase", ["warmup", "finetune"], sequential=True)
+# (evaluate, finetune) depends on (training, finetune) AND (evaluate, warmup)
+```
+
+**Non-SLURM modes** raise `ValueError` if sequential dependencies exist — pass
+`skip_dependency_check=True` to suppress when you deliberately want unordered
+execution (e.g., local debug runs).
+
+**Constraints:**
+- `sequential=True` requires a concrete list with at least 2 values (not a lambda)
+- `variants(randomized=True)` is incompatible with sequential fields
+- `sequential` is only supported on `vg.add()`, not `vg.derive()`
+
 ### Randomised Order
 
 ```python
 for v in vg.variants(randomized=True):
     ...
 ```
+
+> **Note:** `randomized=True` cannot be used when any parameter has `sequential=True`.
 
 ---
 
@@ -623,6 +663,7 @@ run_experiment_lite(
 
     # ── SLURM ─────────────────────────────────────────────────────────────────
     slurm_overrides=None,       # dict of SlurmConfig fields to override per-run
+    skip_dependency_check=False, # skip ValueError when sequential deps used on non-SLURM
 
     # ── Singularity ───────────────────────────────────────────────────────────
     use_singularity=None,       # True/False to override backend config; None = use config

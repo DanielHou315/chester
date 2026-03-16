@@ -373,6 +373,68 @@ contribute to the experiment name hash.  If two variants differ only in derived
 values, they will share the same output directory name — set `exp_name`
 explicitly in the launcher loop if that matters.
 
+### Sequential Dependencies (SLURM only)
+
+Use `sequential=True` on `vg.add()` to create SLURM job dependency chains
+via `sbatch --dependency=afterok:<jobid>`. Jobs for later values only start
+after their predecessors complete successfully.
+
+```python
+vg = VariantGenerator()
+vg.add("task", ["training", "evaluate"], sequential=True)
+vg.add("seed", [1, 2, 3])
+
+for v in vg.variants():
+    run_experiment_lite(
+        stub_method_call=train,
+        variant=v,
+        mode="gl",          # must be a SLURM backend
+        exp_prefix="my_exp",
+    )
+# For each seed: the evaluate job waits for training to finish
+```
+
+**How it works:**
+
+1. `VariantGenerator` attaches dependency metadata to each variant
+2. `run_experiment_lite` maintains a module-level registry mapping variant
+   identities to SLURM job IDs
+3. When submitting a variant with predecessors, the registry is consulted and
+   `--dependency=afterok:<id1>:<id2>...` is passed to `sbatch`
+
+**Multiple sequential fields** create per-field independent chains. Each field's
+values form their own chain, and a variant waits for all its predecessors:
+
+```python
+vg.add("task", ["training", "evaluate"], sequential=True)
+vg.add("phase", ["warmup", "finetune"], sequential=True)
+vg.add("seed", [1, 2])
+
+# For seed=1:
+#   (training, warmup)  → no deps
+#   (evaluate, warmup)  → depends on (training, warmup)
+#   (training, finetune) → depends on (training, warmup)
+#   (evaluate, finetune) → depends on (training, finetune) AND (evaluate, warmup)
+```
+
+**Non-SLURM modes:** Using sequential fields on a non-SLURM backend raises
+`ValueError`. Pass `skip_dependency_check=True` to suppress when you
+deliberately want unordered execution (e.g., local debug runs):
+
+```python
+run_experiment_lite(
+    ...,
+    mode="local",
+    skip_dependency_check=True,  # no error, jobs run unordered
+)
+```
+
+**Constraints:**
+
+- `sequential=True` requires a concrete list with at least 2 values (not a lambda)
+- `variants(randomized=True)` raises `ValueError` when sequential fields exist
+- `sequential` is only supported on `vg.add()`, not `vg.derive()`
+
 ### Hidden Parameters
 
 Parameters can be hidden from the experiment name:
@@ -835,6 +897,7 @@ run_experiment_lite(
     # SLURM
     slurm_overrides=None,            # per-experiment SLURM param overrides
     use_singularity=None,            # True/False/None (None = use backend default)
+    skip_dependency_check=False,     # skip ValueError when sequential deps on non-SLURM
 
     # Hydra
     hydra_enabled=False,             # use Hydra command format

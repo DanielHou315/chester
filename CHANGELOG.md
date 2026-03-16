@@ -5,37 +5,51 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [1.1.0] - 2026-03-12
+## [1.2.0] - 2026-03-16
 
 ### New Features
 
-#### `sequential_steps` — multi-step jobs in one allocation
+#### `sequential=True` — SLURM job dependency chains
 
-`run_experiment_lite` now accepts a `sequential_steps` list.  Each entry is a
-dict of Hydra overrides merged on top of the base variant for that step.
-Chester generates a single bash script (or local `&&`-chained command) that
-runs all steps in series with `set -e`, so step 2 never runs if step 1 fails.
+`vg.add()` now accepts `sequential=True` to create inter-job SLURM dependency
+chains via `sbatch --dependency=afterok:<jobid>`.  Jobs for later values in the
+list only start after their predecessors complete successfully.
 
 ```python
-run_experiment_lite(
-    variant=vv,
-    sequential_steps=[
-        {"experiment.tasks": ["training"]},
-        {"experiment.tasks": ["evaluate"], "wandb.resume": True},
-    ],
-    ...
-)
+vg = VariantGenerator()
+vg.add("task", ["training", "evaluate"], sequential=True)
+vg.add("seed", [1, 2, 3])
+
+for v in vg.variants():
+    run_experiment_lite(stub_method_call=run_task, variant=v, mode="gl", ...)
+# For each seed: evaluate waits for training to finish
 ```
 
-Motivated by Isaac Sim's single-init constraint: training and evaluate must
-be separate Python processes but can share one SLURM allocation.
+Multiple sequential fields create per-field independent chains.  Non-SLURM
+modes raise `ValueError` unless `skip_dependency_check=True` is passed.
 
-- `sequential_steps=None` (default): identical behavior to prior versions — no
-  regression.
-- `sequential_steps=[]`: raises `ValueError`.
-- In local debug mode (`launch_with_subprocess=False`), multi-step runs
-  automatically force subprocess execution since Hydra cannot be initialized
-  twice in-process.
+#### `confirm_action()` — unified confirmation prompts
+
+All interactive confirmation prompts (`query_yes_no`, fresh-start input) are
+now handled by `confirm_action(message, default, skip)`.  `query_yes_no` is
+deprecated with a `DeprecationWarning`.
+
+### Breaking Changes
+
+- **`sequential_steps` removed.** The `sequential_steps` parameter on
+  `run_experiment_lite` and all backends has been removed.  Use
+  `vg.add(..., sequential=True)` for SLURM dependency chains instead.
+
+### Bug Fixes
+
+- **SSH backend syntax error** — fixed dangling `else` at wrong indentation
+  level in `SSHBackend.generate_script()` that caused `SyntaxError` on import.
+
+---
+
+## [1.1.0] - 2026-03-12
+
+### New Features
 
 #### `vg.derive()` — derived parameters bypassing OmegaConf eval
 
