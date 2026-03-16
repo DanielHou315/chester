@@ -913,6 +913,20 @@ def run_experiment_lite(
     local_batch_dir = os.path.join(cfg_log_dir, sub_dir, exp_prefix)
 
     # ----------------------------------------------------------------
+    # 4.5. Fresh start — delete existing dirs before ID generation
+    # ----------------------------------------------------------------
+    if fresh and first_variant:
+        _fresh_start_v2(
+            exp_prefix=exp_prefix,
+            sub_dir=sub_dir,
+            cfg_log_dir=cfg_log_dir,
+            backend_config=backend_config,
+            project_path=project_path,
+            is_remote=is_remote,
+            mode=mode,
+        )
+
+    # ----------------------------------------------------------------
     # 5. Task preparation (same logic as original)
     # ----------------------------------------------------------------
     assert stub_method_call is not None or batch_tasks is not None or script is not None, \
@@ -993,20 +1007,6 @@ def run_experiment_lite(
         elif "variant" in task:
             del task["variant"]
         task["env"] = task.get("env", dict()) or dict()
-
-    # ----------------------------------------------------------------
-    # 5.5. Fresh start — delete existing dirs before launch
-    # ----------------------------------------------------------------
-    if fresh and first_variant:
-        _fresh_start_v2(
-            exp_prefix=exp_prefix,
-            sub_dir=sub_dir,
-            cfg_log_dir=cfg_log_dir,
-            backend_config=backend_config,
-            project_path=project_path,
-            is_remote=is_remote,
-            mode=mode,
-        )
 
     # ----------------------------------------------------------------
     # 6. Git snapshot (before any execution)
