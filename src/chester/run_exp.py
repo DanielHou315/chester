@@ -211,16 +211,20 @@ def monitor_processes(active_processes, max_processes=2, sleep_time=1):
 
     return active_processes
 
-def query_yes_no(question, default="yes"):
-    """Ask a yes/no question via raw_input() and return their answer.
+def confirm_action(message: str, default: str = "yes", skip: bool = False) -> bool:
+    """Prompt the user for yes/no confirmation.
 
-    "question" is a string that is presented to the user.
-    "default" is the presumed answer if the user just hits <Enter>.
-        It must be "yes" (the default), "no" or None (meaning
-        an answer is required of the user).
+    Args:
+        message: The question to display.
+        default: Presumed answer on empty input ("yes", "no", or None for required).
+        skip: If True, return True without prompting.
 
-    The "answer" return value is True for "yes" or False for "no".
+    Returns:
+        True if confirmed, False if denied.
     """
+    if skip:
+        return True
+
     valid = {"yes": True, "y": True, "ye": True,
              "no": False, "n": False}
     if default is None:
@@ -230,11 +234,10 @@ def query_yes_no(question, default="yes"):
     elif default == "no":
         prompt = " [y/N] "
     else:
-        raise ValueError("invalid default answer: '%s'" % default)
+        raise ValueError(f"invalid default answer: '{default}'")
 
     while True:
-        sys.stdout.write(question + prompt)
-        choice = input().lower()
+        choice = input(message + prompt).lower()
         if default is not None and choice == '':
             return valid[default]
         elif choice in valid:
@@ -242,6 +245,13 @@ def query_yes_no(question, default="yes"):
         else:
             sys.stdout.write("Please respond with 'yes' or 'no' "
                              "(or 'y' or 'n').\n")
+
+
+def query_yes_no(question, default="yes"):
+    """Deprecated: use confirm_action() instead."""
+    import warnings
+    warnings.warn("query_yes_no() is deprecated, use confirm_action()", DeprecationWarning, stacklevel=2)
+    return confirm_action(question, default=default)
 
 
 
@@ -297,6 +307,16 @@ class VariantGenerator(dict):
                 return param[1]
 
     def add(self, key, vals, **kwargs):
+        if kwargs.get("sequential"):
+            if callable(vals) and not isinstance(vals, list):
+                raise ValueError(
+                    f"sequential=True on '{key}' cannot be used with callable values. "
+                    f"Provide a concrete list instead."
+                )
+            if isinstance(vals, list) and len(vals) < 2:
+                raise ValueError(
+                    f"sequential=True on '{key}' requires at least 2 values, got {len(vals)}"
+                )
         self._variants.append((key, vals, kwargs))
 
     def derive(self, key, fn):
@@ -356,6 +376,70 @@ class VariantGenerator(dict):
         """
         self._derivations.append((key, fn))
 
+    def get_sequential_keys(self) -> list:
+        """Return keys marked with sequential=True."""
+        return [k for k, _, cfg in self._variants if cfg.get("sequential")]
+
+    def get_dependency_map(self, variants: list) -> dict:
+        """Compute inter-variant dependency map based on sequential fields.
+
+        For each sequential key, a variant's predecessor is the variant that is
+        identical except the sequential field has the previous value in the list.
+
+        Args:
+            variants: List of variant dicts (from self.variants()).
+
+        Returns:
+            Dict mapping variant index -> list of predecessor variant indices.
+            Variants with no predecessors are omitted.
+        """
+        seq_keys = self.get_sequential_keys()
+        if not seq_keys:
+            return {}
+
+        # Build value ordering for each sequential key
+        seq_val_order = {}
+        seq_val_list = {}
+        for key, vals, cfg in self._variants:
+            if cfg.get("sequential") and isinstance(vals, list):
+                seq_val_order[key] = {v: i for i, v in enumerate(vals)}
+                seq_val_list[key] = vals
+
+        # Index variants by their identity tuple (all field values)
+        all_keys = [k for k, _, _ in self._variants]
+        variant_index = {}
+        for i, v in enumerate(variants):
+            identity = tuple(v.get(k) for k in all_keys)
+            variant_index[identity] = i
+
+        dep_map = {}
+        for i, v in enumerate(variants):
+            predecessors = []
+            identity = list(v.get(k) for k in all_keys)
+
+            for seq_key in seq_keys:
+                val = v[seq_key]
+                order = seq_val_order[seq_key]
+                val_idx = order.get(val, 0)
+                if val_idx == 0:
+                    continue  # first value, no predecessor for this key
+
+                # Find the previous value
+                prev_val = seq_val_list[seq_key][val_idx - 1]
+
+                # Build predecessor identity: same as current but with prev_val for this key
+                key_pos = all_keys.index(seq_key)
+                pred_identity = list(identity)
+                pred_identity[key_pos] = prev_val
+                pred_idx = variant_index.get(tuple(pred_identity))
+                if pred_idx is not None:
+                    predecessors.append(pred_idx)
+
+            if predecessors:
+                dep_map[i] = predecessors
+
+        return dep_map
+
     def update(self, key, vals, **kwargs):
         for i, (k, _, _) in enumerate(self._variants):
             if k == key:
@@ -381,6 +465,14 @@ class VariantGenerator(dict):
         return ret
 
     def variants(self, randomized=False):
+        # Reject randomized=True when sequential keys exist (check early)
+        seq_keys = self.get_sequential_keys()
+        if seq_keys and randomized:
+            raise ValueError(
+                "variants(randomized=True) cannot be used with sequential fields. "
+                "Sequential dependencies require deterministic variant ordering."
+            )
+
         ret = list(self.ivariants())
         if randomized:
             np.random.shuffle(ret)
@@ -389,6 +481,18 @@ class VariantGenerator(dict):
         for variant in ret:
             for key, fn in self._derivations:
                 variant[key] = fn(variant)
+
+        if seq_keys:
+            dep_map = self.get_dependency_map(ret)
+            all_keys = [k for k, _, _ in self._variants]
+            for i, v in enumerate(ret):
+                identity = tuple((k, v.get(k)) for k in all_keys)
+                v["_chester_seq_identity"] = identity
+                v["_chester_pred_identities"] = [
+                    tuple((k, ret[j].get(k)) for k in all_keys)
+                    for j in dep_map.get(i, [])
+                ]
+
         ret[0]['chester_first_variant'] = True
         ret[-1]['chester_last_variant'] = True
         return ret
@@ -728,9 +832,7 @@ def _fresh_start_v2(
                   f"{total_remote_pt} pt/pth files")
 
     print()
-    print("WARNING: This will permanently delete ALL directories listed above.")
-    answer = input("Type 'yes' or 'y' to confirm: ").strip().lower()
-    if answer not in ('yes', 'y'):
+    if not confirm_action("WARNING: This will permanently delete ALL directories listed above."):
         print("Aborted.")
         sys.exit(0)
 
@@ -775,6 +877,8 @@ def _fresh_start_v2(
 
 exp_count = -2
 sub_process_popens = []
+# Module-level registry: (exp_prefix, seq_identity) -> slurm_job_id
+_slurm_job_registry: dict = {}
 now = datetime.datetime.now(dateutil.tz.tzlocal())
 timestamp = now.strftime('%m_%d_%H_%M')
 remote_confirmed = False
@@ -811,7 +915,7 @@ def run_experiment_lite(
         git_snapshot=True,
         confirm=False,
         fresh=False,
-        sequential_steps: list = None,
+        skip_dependency_check=False,
         **kwargs):
     """
     Serialize the stubbed method call and run the experiment using the
@@ -860,12 +964,6 @@ def run_experiment_lite(
     if variations is None:
         variations = []
 
-    if sequential_steps is not None and len(sequential_steps) == 0:
-        raise ValueError(
-            "sequential_steps must be None or a non-empty list. "
-            "Pass None (default) for single-step behavior."
-        )
-
     # ----------------------------------------------------------------
     # 1. Reject deprecated modes
     # ----------------------------------------------------------------
@@ -909,6 +1007,27 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     last_variant = variant.pop('chester_last_variant', False)
     first_variant = variant.pop('chester_first_variant', False)
+    seq_identity = variant.pop("_chester_seq_identity", None)
+    pred_identities = variant.pop("_chester_pred_identities", None)
+
+    # ----------------------------------------------------------------
+    # 4.1. Clear dependency registry on first variant
+    # ----------------------------------------------------------------
+    if first_variant:
+        _slurm_job_registry.clear()
+
+    # ----------------------------------------------------------------
+    # 4.2. Sequential dependency check (non-SLURM guard)
+    # ----------------------------------------------------------------
+    has_sequential = seq_identity is not None
+
+    if has_sequential and backend_config.type != "slurm" and not skip_dependency_check:
+        raise ValueError(
+            "[chester] sequential dependencies (sequential=True in vg.add()) "
+            f"are only enforced on SLURM backends. Current mode: '{mode}'.\n"
+            "Pass skip_dependency_check=True to run_experiment_lite() "
+            "to suppress this check when you deliberately want unordered execution."
+        )
 
     local_batch_dir = os.path.join(cfg_log_dir, sub_dir, exp_prefix)
 
@@ -1023,9 +1142,11 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     # 7. Confirm for remote (non-dry) runs
     # ----------------------------------------------------------------
-    if is_remote and not remote_confirmed and not dry and not confirm:
-        remote_confirmed = query_yes_no(
-            "Running in (non-dry) mode %s. Confirm?" % mode)
+    if is_remote and not remote_confirmed and not dry:
+        remote_confirmed = confirm_action(
+            f"Running in (non-dry) mode {mode}. Confirm?",
+            skip=confirm,
+        )
         if not remote_confirmed:
             sys.exit(1)
 
@@ -1074,7 +1195,6 @@ def run_experiment_lite(
                 env=merged_env or None,
                 hydra_enabled=hydra_enabled,
                 hydra_flags=hydra_flags,
-                sequential_steps=sequential_steps,
             )
 
             if print_command:
@@ -1084,11 +1204,7 @@ def run_experiment_lite(
 
             # Singularity wrapping always requires subprocess — in-process
             # hydra execution cannot run inside a container.
-            # Sequential steps also require subprocess: each step is a separate
-            # process (Isaac Sim can only be initialized once), and Hydra cannot
-            # be initialized twice in the same process.
-            multi_step = sequential_steps is not None and len(sequential_steps) > 1
-            use_subprocess = launch_with_subprocess or backend.config.singularity or multi_step
+            use_subprocess = launch_with_subprocess or backend.config.singularity
             if use_subprocess:
                 try:
                     run_env = dict(os.environ, **(merged_env or {}))
@@ -1125,7 +1241,6 @@ def run_experiment_lite(
             if backend_config.type == "slurm" and slurm_overrides:
                 gen_kwargs["slurm_overrides"] = slurm_overrides
 
-            gen_kwargs["sequential_steps"] = sequential_steps
             script_content = backend.generate_script(backend_task, **gen_kwargs)
 
             if print_command:
@@ -1139,8 +1254,29 @@ def run_experiment_lite(
                 with open(os.path.join(local_exp_dir, script_name), 'w') as f:
                     f.write(script_content)
 
+            # Resolve sequential dependency job IDs
+            dependency_job_ids = None
+            if backend_config.type == "slurm" and pred_identities:
+                dependency_job_ids = []
+                for pred_identity in pred_identities:
+                    jid = _slurm_job_registry.get((exp_prefix, pred_identity))
+                    if jid is not None:
+                        dependency_job_ids.append(jid)
+                    else:
+                        print(f"[chester] Warning: predecessor job not found in registry "
+                              f"for identity {pred_identity}. Submitting without this dependency.")
+                if not dependency_job_ids:
+                    dependency_job_ids = None
+
             # Submit via backend
-            submit_result = backend.submit(backend_task, script_content, dry=dry)
+            submit_kwargs = {"dry": dry}
+            if dependency_job_ids:
+                submit_kwargs["dependency_job_ids"] = dependency_job_ids
+            submit_result = backend.submit(backend_task, script_content, **submit_kwargs)
+
+            # Register job ID in sequential dependency registry
+            if backend_config.type == "slurm" and seq_identity is not None and submit_result is not None:
+                _slurm_job_registry[(exp_prefix, seq_identity)] = submit_result
 
             # Register job in persistent job store
             if auto_pull and not dry:
