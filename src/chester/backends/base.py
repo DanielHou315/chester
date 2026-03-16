@@ -26,6 +26,7 @@ class SingularityConfig:
     overlay: Optional[str] = None  # path to persistent ext3 overlay image
     overlay_size: int = 10240  # overlay size in MB (default 10 GB)
     fakeroot: bool = True  # --fakeroot: run as fake root inside the container
+    pid_namespace: bool = False  # --pid: isolate PID namespace so all child processes are killed on exit
 
 
 @dataclass
@@ -140,6 +141,7 @@ def parse_backend_config(name: str, raw: Dict[str, Any]) -> BackendConfig:
             overlay=sing_raw.get("overlay"),
             overlay_size=sing_raw.get("overlay_size", 10240),
             fakeroot=sing_raw.get("fakeroot", True),
+            pid_namespace=sing_raw.get("pid_namespace", False),
         )
 
     # Parse SLURM config
@@ -347,6 +349,8 @@ class Backend(ABC):
             parts.append("--nv")
         if sing.writable_tmpfs:
             parts.append("--writable-tmpfs")
+        if sing.pid_namespace:
+            parts.append("--pid")
         # Persistent ext3 overlay
         if sing.overlay:
             overlay = sing.overlay

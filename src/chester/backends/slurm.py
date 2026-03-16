@@ -122,7 +122,16 @@ class SlurmBackend(Backend):
                     extra_overrides=step_overrides,
                 )
                 inner = list(sing_prepare) + [command]
-                lines.append(self.wrap_with_singularity(inner))
+                if i > 0:
+                    # Brief pause to let the GPU driver reclaim resources
+                    # from the previous container before starting the next.
+                    lines.append("sleep 5")
+                # Wrap each step as a SLURM job step via srun --exclusive.
+                # This forces SLURM to tear down GPU cgroups between steps,
+                # releasing any stale CUDA contexts left by the previous run.
+                lines.append(
+                    f"srun --exclusive {self.wrap_with_singularity(inner)}"
+                )
         else:
             inner: List[str] = []
             if self.config.singularity:

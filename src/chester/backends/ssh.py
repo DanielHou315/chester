@@ -97,6 +97,10 @@ class SSHBackend(Backend):
                     extra_overrides=step_overrides,
                 )
                 inner = list(sing_prepare) + [command]
+                if i > 0:
+                    # Brief pause to let the GPU driver reclaim resources
+                    # from the previous container before starting the next.
+                    lines.append("sleep 5")
                 lines.append(self.wrap_with_singularity(inner))
         else:
             inner: List[str] = []
