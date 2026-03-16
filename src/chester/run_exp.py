@@ -307,6 +307,16 @@ class VariantGenerator(dict):
                 return param[1]
 
     def add(self, key, vals, **kwargs):
+        if kwargs.get("sequential"):
+            if callable(vals) and not isinstance(vals, list):
+                raise ValueError(
+                    f"sequential=True on '{key}' cannot be used with callable values. "
+                    f"Provide a concrete list instead."
+                )
+            if isinstance(vals, list) and len(vals) < 2:
+                raise ValueError(
+                    f"sequential=True on '{key}' requires at least 2 values, got {len(vals)}"
+                )
         self._variants.append((key, vals, kwargs))
 
     def derive(self, key, fn):
@@ -365,6 +375,70 @@ class VariantGenerator(dict):
           Override ``exp_name`` explicitly in the launcher loop if this matters.
         """
         self._derivations.append((key, fn))
+
+    def get_sequential_keys(self) -> list:
+        """Return keys marked with sequential=True."""
+        return [k for k, _, cfg in self._variants if cfg.get("sequential")]
+
+    def get_dependency_map(self, variants: list) -> dict:
+        """Compute inter-variant dependency map based on sequential fields.
+
+        For each sequential key, a variant's predecessor is the variant that is
+        identical except the sequential field has the previous value in the list.
+
+        Args:
+            variants: List of variant dicts (from self.variants()).
+
+        Returns:
+            Dict mapping variant index -> list of predecessor variant indices.
+            Variants with no predecessors are omitted.
+        """
+        seq_keys = self.get_sequential_keys()
+        if not seq_keys:
+            return {}
+
+        # Build value ordering for each sequential key
+        seq_val_order = {}
+        seq_val_list = {}
+        for key, vals, cfg in self._variants:
+            if cfg.get("sequential") and isinstance(vals, list):
+                seq_val_order[key] = {v: i for i, v in enumerate(vals)}
+                seq_val_list[key] = vals
+
+        # Index variants by their identity tuple (all field values)
+        all_keys = [k for k, _, _ in self._variants]
+        variant_index = {}
+        for i, v in enumerate(variants):
+            identity = tuple(v.get(k) for k in all_keys)
+            variant_index[identity] = i
+
+        dep_map = {}
+        for i, v in enumerate(variants):
+            predecessors = []
+            identity = list(v.get(k) for k in all_keys)
+
+            for seq_key in seq_keys:
+                val = v[seq_key]
+                order = seq_val_order[seq_key]
+                val_idx = order.get(val, 0)
+                if val_idx == 0:
+                    continue  # first value, no predecessor for this key
+
+                # Find the previous value
+                prev_val = seq_val_list[seq_key][val_idx - 1]
+
+                # Build predecessor identity: same as current but with prev_val for this key
+                key_pos = all_keys.index(seq_key)
+                pred_identity = list(identity)
+                pred_identity[key_pos] = prev_val
+                pred_idx = variant_index.get(tuple(pred_identity))
+                if pred_idx is not None:
+                    predecessors.append(pred_idx)
+
+            if predecessors:
+                dep_map[i] = predecessors
+
+        return dep_map
 
     def update(self, key, vals, **kwargs):
         for i, (k, _, _) in enumerate(self._variants):
