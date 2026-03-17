@@ -317,6 +317,19 @@ class VariantGenerator(dict):
                 raise ValueError(
                     f"sequential=True on '{key}' requires at least 2 values, got {len(vals)}"
                 )
+        if kwargs.get("shared_dir"):
+            if not kwargs.get("sequential"):
+                raise ValueError(
+                    f"shared_dir=True on '{key}' requires sequential=True. "
+                    f"Only sequential variants can share a directory."
+                )
+            # Only one shared_dir key allowed
+            existing = [k for k, _, c in self._variants if c.get("shared_dir")]
+            if existing:
+                raise ValueError(
+                    f"shared_dir=True on '{key}' conflicts with existing shared_dir "
+                    f"key '{existing[0]}'. Only one shared_dir key is supported."
+                )
         self._variants.append((key, vals, kwargs))
 
     def derive(self, key, fn):
@@ -379,6 +392,10 @@ class VariantGenerator(dict):
     def get_sequential_keys(self) -> list:
         """Return keys marked with sequential=True."""
         return [k for k, _, cfg in self._variants if cfg.get("sequential")]
+
+    def get_shared_dir_keys(self) -> list:
+        """Return keys marked with shared_dir=True."""
+        return [k for k, _, cfg in self._variants if cfg.get("shared_dir")]
 
     def get_dependency_map(self, variants: list) -> dict:
         """Compute inter-variant dependency map based on sequential fields.
@@ -463,9 +480,11 @@ class VariantGenerator(dict):
 
     def variations(self):
         ret = []
-        for key, vals, _ in self._variants:
+        for key, vals, cfg in self._variants:
             if not isinstance(vals, list):
                 continue
+            if cfg.get("shared_dir"):
+                continue  # shared_dir keys don't affect exp_name
             if len(vals) > 1:
                 ret.append(key)
         return ret
@@ -502,6 +521,38 @@ class VariantGenerator(dict):
                     tuple((k, _hashable(ret[j].get(k))) for k in all_keys)
                     for j in dep_map.get(i, [])
                 ]
+
+        # Inject shared_dir metadata
+        shared_dir_keys = self.get_shared_dir_keys()
+        if shared_dir_keys:
+            non_shared_keys = [k for k, _, cfg in self._variants
+                               if not cfg.get("shared_dir")]
+
+            def _hashable_sd(val):
+                return tuple(val) if isinstance(val, list) else val
+
+            # Group variants by their non-shared-dir field values
+            groups = {}  # group_id -> [variant_indices]
+            for i, v in enumerate(ret):
+                group_id = tuple(_hashable_sd(v.get(k)) for k in non_shared_keys)
+                groups.setdefault(group_id, []).append(i)
+
+            for group_id, indices in groups.items():
+                for pos, idx in enumerate(indices):
+                    v = ret[idx]
+                    fields = []
+                    for sdk in shared_dir_keys:
+                        short_key = sdk.split('.')[-1]
+                        val = v[sdk]
+                        if isinstance(val, (list, tuple)):
+                            val_str = '_'.join(str(x) for x in val)
+                        else:
+                            val_str = str(val)
+                        fields.append((short_key, val_str))
+                    v["_chester_shared_dir_fields"] = fields
+                    v["_chester_shared_dir_first"] = (pos == 0)
+                    v["_chester_shared_dir_last"] = (pos == len(indices) - 1)
+                    v["_chester_shared_dir_group"] = group_id
 
         ret[0]['chester_first_variant'] = True
         ret[-1]['chester_last_variant'] = True
@@ -889,6 +940,8 @@ exp_count = -2
 sub_process_popens = []
 # Module-level registry: (exp_prefix, seq_identity) -> slurm_job_id
 _slurm_job_registry: dict = {}
+# Module-level registry: (exp_prefix, shared_dir_group) -> exp_name
+_shared_dir_registry: dict = {}
 now = datetime.datetime.now(dateutil.tz.tzlocal())
 timestamp = now.strftime('%m_%d_%H_%M')
 remote_confirmed = False
@@ -1019,12 +1072,17 @@ def run_experiment_lite(
     first_variant = variant.pop('chester_first_variant', False)
     seq_identity = variant.pop("_chester_seq_identity", None)
     pred_identities = variant.pop("_chester_pred_identities", None)
+    shared_dir_fields = variant.pop("_chester_shared_dir_fields", None)
+    shared_dir_first = variant.pop("_chester_shared_dir_first", True)
+    shared_dir_last = variant.pop("_chester_shared_dir_last", True)
+    shared_dir_group = variant.pop("_chester_shared_dir_group", None)
 
     # ----------------------------------------------------------------
     # 4.1. Clear dependency registry on first variant
     # ----------------------------------------------------------------
     if first_variant:
         _slurm_job_registry.clear()
+        _shared_dir_registry.clear()
 
     # ----------------------------------------------------------------
     # 4.2. Sequential dependency check (non-SLURM guard)
@@ -1089,7 +1147,15 @@ def run_experiment_lite(
         else:
             data = base64.b64encode(pickle.dumps(call)).decode("utf-8")
         task["args_data"] = data
-        exp_count += 1
+
+        # For shared_dir non-first variants, reuse exp_name from the first in group
+        is_shared_reuse = (shared_dir_fields is not None and not shared_dir_first)
+        if is_shared_reuse:
+            cached = _shared_dir_registry.get((exp_prefix, shared_dir_group))
+            if cached:
+                task["exp_name"] = cached
+        else:
+            exp_count += 1
 
         if task.get("exp_name", None) is None:
             exp_name = exp_prefix
@@ -1110,6 +1176,10 @@ def run_experiment_lite(
                 exp_count = ind + 1
             task["exp_name"] = "{}_{}".format(exp_count, exp_name)
             print('exp name ', task["exp_name"])
+
+        # Register exp_name for shared_dir reuse
+        if shared_dir_fields is not None and shared_dir_first:
+            _shared_dir_registry[(exp_prefix, shared_dir_group)] = task["exp_name"]
 
         # Handle log_dir: user specifies local path, chester maps to remote
         local_log_dir = task.get("log_dir", None)
@@ -1251,6 +1321,12 @@ def run_experiment_lite(
             if backend_config.type == "slurm" and slurm_overrides:
                 gen_kwargs["slurm_overrides"] = slurm_overrides
 
+            # Pass shared_dir info for output file naming and .done marker
+            if shared_dir_fields is not None:
+                suffix_parts = [f"{sk}_{sv}" for sk, sv in shared_dir_fields]
+                gen_kwargs["slurm_output_suffix"] = '_'.join(suffix_parts)
+                gen_kwargs["write_done_marker"] = shared_dir_last
+
             script_content = backend.generate_script(backend_task, **gen_kwargs)
 
             if print_command:
@@ -1293,7 +1369,10 @@ def run_experiment_lite(
                     _slurm_job_registry[(exp_prefix, seq_identity)] = "dry"
 
             # Register job in persistent job store
-            if auto_pull and not dry:
+            # For shared_dir, only register auto-pull for the last variant
+            # in the group (it's the one that writes .done)
+            should_register_pull = auto_pull and not dry and shared_dir_last
+            if should_register_pull:
                 slurm_job_id = submit_result if backend_config.type == "slurm" else None
                 resolved_extra_pull_dirs = _resolve_extra_pull_dirs_v2(
                     extra_pull_dirs, project_path, backend_config.remote_dir

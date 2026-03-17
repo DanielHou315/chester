@@ -34,6 +34,8 @@ class SlurmBackend(Backend):
         slurm_overrides: Optional[Dict[str, Any]] = None,
         hydra_enabled: bool = False,
         hydra_flags: Optional[Dict[str, Any]] = None,
+        slurm_output_suffix: Optional[str] = None,
+        write_done_marker: bool = True,
     ) -> str:
         """Generate a SLURM batch script.
 
@@ -77,13 +79,20 @@ class SlurmBackend(Backend):
         lines.append(header)
 
         # Per-job SBATCH directives
-        lines.append(f"#SBATCH -o {log_dir}/slurm.out")
-        lines.append(f"#SBATCH -e {log_dir}/slurm.err")
+        if slurm_output_suffix:
+            lines.append(f"#SBATCH -o {log_dir}/slurm_{slurm_output_suffix}.out")
+            lines.append(f"#SBATCH -e {log_dir}/slurm_{slurm_output_suffix}.err")
+        else:
+            lines.append(f"#SBATCH -o {log_dir}/slurm.out")
+            lines.append(f"#SBATCH -e {log_dir}/slurm.err")
         lines.append(f"#SBATCH --job-name={exp_name}")
 
         # ---- Bash preamble ----
         # Redirect xtrace to a separate file so slurm.err stays clean
-        lines.append(f"exec 19>{log_dir}/chester_xtrace.log")
+        if slurm_output_suffix:
+            lines.append(f"exec 19>{log_dir}/chester_xtrace_{slurm_output_suffix}.log")
+        else:
+            lines.append(f"exec 19>{log_dir}/chester_xtrace.log")
         lines.append("BASH_XTRACEFD=19")
         lines.append("set -x")
         lines.append("set -u")
@@ -118,7 +127,8 @@ class SlurmBackend(Backend):
             lines.append(command)
 
         # .done marker — always on host, after container exits
-        lines.append(f"touch {log_dir}/.done")
+        if write_done_marker:
+            lines.append(f"touch {log_dir}/.done")
 
         return "\n".join(lines) + "\n"
 

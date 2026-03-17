@@ -33,6 +33,8 @@ class SSHBackend(Backend):
         env: Optional[Dict[str, str]] = None,
         hydra_enabled: bool = False,
         hydra_flags: Optional[Dict[str, Any]] = None,
+        slurm_output_suffix: Optional[str] = None,
+        write_done_marker: bool = True,
     ) -> str:
         """Generate a full bash script for SSH-based remote execution.
 
@@ -55,6 +57,8 @@ class SSHBackend(Backend):
             env: Optional env vars to prepend.
             hydra_enabled: Use Hydra override format for args.
             hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
+            slurm_output_suffix: Suffix for log files (shared_dir support).
+            write_done_marker: Whether to write .done marker (default True).
 
         Returns:
             Full bash script as a string.
@@ -66,7 +70,10 @@ class SSHBackend(Backend):
         lines: List[str] = []
         lines.append("#!/usr/bin/env bash")
         # Redirect xtrace to a separate file so output.log stays clean
-        lines.append(f"exec 19>{log_dir}/chester_xtrace.log")
+        if slurm_output_suffix:
+            lines.append(f"exec 19>{log_dir}/chester_xtrace_{slurm_output_suffix}.log")
+        else:
+            lines.append(f"exec 19>{log_dir}/chester_xtrace.log")
         lines.append("BASH_XTRACEFD=19")
         lines.append("set -x")
         lines.append("set -u")
@@ -93,7 +100,8 @@ class SSHBackend(Backend):
             lines.append(command)
 
         # .done marker — always on host, after container exits
-        lines.append(f"touch {log_dir}/.done")
+        if write_done_marker:
+            lines.append(f"touch {log_dir}/.done")
 
         return "\n".join(lines) + "\n"
 
