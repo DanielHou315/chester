@@ -53,8 +53,8 @@ def _format_hydra_value(value: Any) -> str:
         if ' ' in value:
             return f'"{value}"'
         return value
-    elif isinstance(value, list):
-        # Format list values with Hydra's format [val1,val2,...]
+    elif isinstance(value, (list, tuple)):
+        # Format list/tuple values with Hydra's format [val1,val2,...]
         formatted_items = []
         for item in value:
             if isinstance(item, str) and ',' in item:
