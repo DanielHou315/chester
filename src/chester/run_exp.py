@@ -1266,7 +1266,7 @@ def run_experiment_lite(
 
             # Resolve sequential dependency job IDs
             dependency_job_ids = None
-            if backend_config.type == "slurm" and pred_identities:
+            if backend_config.type == "slurm" and pred_identities and not dry:
                 dependency_job_ids = []
                 for pred_identity in pred_identities:
                     jid = _slurm_job_registry.get((exp_prefix, pred_identity))
@@ -1285,8 +1285,12 @@ def run_experiment_lite(
             submit_result = backend.submit(backend_task, script_content, **submit_kwargs)
 
             # Register job ID in sequential dependency registry
-            if backend_config.type == "slurm" and seq_identity is not None and submit_result is not None:
-                _slurm_job_registry[(exp_prefix, seq_identity)] = submit_result
+            if backend_config.type == "slurm" and seq_identity is not None:
+                if submit_result is not None:
+                    _slurm_job_registry[(exp_prefix, seq_identity)] = submit_result
+                elif dry:
+                    # Register placeholder so dry-run validation doesn't warn
+                    _slurm_job_registry[(exp_prefix, seq_identity)] = "dry"
 
             # Register job in persistent job store
             if auto_pull and not dry:
