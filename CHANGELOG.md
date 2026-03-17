@@ -28,6 +28,18 @@ for v in vg.variants():
 Multiple sequential fields create per-field independent chains.  Non-SLURM
 modes raise `ValueError` unless `skip_dependency_check=True` is passed.
 
+#### `shared_dir=True` — shared experiment directory for sequential steps
+
+`vg.add(..., sequential=True, shared_dir=True)` makes all sequential values
+share the same `exp_name` and `log_dir`.  SLURM output files are namespaced
+(`slurm_{field_short_name}_{value}.out`), the `.done` marker is only written by
+the last step, and auto-pull is only registered for the last step.  Only one
+`shared_dir` key is supported per sweep.
+
+```python
+vg.add("experiment.tasks", [("training",), ("evaluate",)], sequential=True, shared_dir=True)
+```
+
 #### `confirm_action()` — unified confirmation prompts
 
 All interactive confirmation prompts (`query_yes_no`, fresh-start input) are

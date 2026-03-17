@@ -137,7 +137,8 @@ vg = VariantGenerator()
 vg.add('learning_rate', [0.001, 0.01])
 vg.add('batch_size', [32, 64])
 # sequential=True creates SLURM dependency chains (sbatch --dependency=afterok)
-vg.add('task', ['training', 'evaluate'], sequential=True)
+# shared_dir=True makes all sequential steps share the same exp dir
+vg.add('task', ['training', 'evaluate'], sequential=True, shared_dir=True)
 
 for v in vg.variants():
     run_experiment_lite(

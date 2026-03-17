@@ -501,7 +501,31 @@ vg.add("phase", ["warmup", "finetune"], sequential=True)
 `skip_dependency_check=True` to suppress when you deliberately want unordered
 execution (e.g., local debug runs).
 
+### Shared Directory (`shared_dir=True`)
+
+When sequential steps are phases of the same logical experiment (e.g., training
+then evaluation), use `shared_dir=True` so all steps share the same experiment
+directory:
+
+```python
+vg = VariantGenerator()
+vg.add("experiment.tasks", [("training",), ("evaluate",)], sequential=True, shared_dir=True)
+vg.add("seed", [1, 2, 3])
+```
+
+**Behaviour:**
+- All sequential values produce the same `exp_name` and `log_dir` — outputs
+  accumulate in a single directory instead of separate ones per step.
+- SLURM output files are namespaced by value:
+  `slurm_{field_short_name}_{value}.out` (e.g., `slurm_tasks_training.out`).
+- The `.done` marker is only written by the **last** sequential step.
+- Auto-pull is only registered for the **last** step.
+
 **Constraints:**
+- `shared_dir=True` requires `sequential=True`.
+- Only **one** `shared_dir` key is supported per sweep.
+
+**Constraints (sequential):**
 - `sequential=True` requires a concrete list with at least 2 values (not a lambda)
 - `variants(randomized=True)` is incompatible with sequential fields
 - `sequential` is only supported on `vg.add()`, not `vg.derive()`

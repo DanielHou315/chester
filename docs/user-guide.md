@@ -429,6 +429,27 @@ run_experiment_lite(
 )
 ```
 
+#### Shared Directory (`shared_dir=True`)
+
+When sequential steps are phases of the same logical experiment (e.g., training
+then evaluation), use `shared_dir=True` so all steps share the same experiment
+directory instead of creating separate directories per step:
+
+```python
+vg = VariantGenerator()
+vg.add("experiment.tasks", [("training",), ("evaluate",)], sequential=True, shared_dir=True)
+vg.add("seed", [1, 2, 3])
+```
+
+**What changes with `shared_dir=True`:**
+- All sequential values share the same `exp_name` and `log_dir`.
+- SLURM output files are namespaced: `slurm_{field_short_name}_{value}.out`
+  (e.g., `slurm_tasks_training.out`, `slurm_tasks_evaluate.out`).
+- The `.done` marker is only written by the last sequential step.
+- Auto-pull is only registered for the last step.
+- `shared_dir=True` requires `sequential=True`.
+- Only one `shared_dir` key is supported per sweep.
+
 **Constraints:**
 
 - `sequential=True` requires a concrete list with at least 2 values (not a lambda)
