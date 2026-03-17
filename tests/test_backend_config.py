@@ -134,7 +134,7 @@ def test_slurm_generates_header():
         gpus=2,
         cpus_per_gpu=4,
         mem_per_gpu="80G",
-        extra_directives=["--gpu_cmode=shared"],
+        extras={"gpu_cmode": "shared"},
     )
     header = slurm.to_sbatch_header()
     assert "#!/usr/bin/env bash" in header

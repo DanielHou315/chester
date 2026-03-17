@@ -31,7 +31,14 @@ class SingularityConfig:
 
 @dataclass
 class SlurmConfig:
-    """SLURM job parameters with per-experiment override support."""
+    """SLURM job parameters with per-experiment override support.
+
+    Known fields (partition, time, gpus, etc.) are emitted as their
+    corresponding ``#SBATCH`` directives.  Any additional key-value pairs
+    — passed via ``slurm_overrides`` in the launcher or the YAML config —
+    are stored in ``extras`` and emitted as ``#SBATCH --key=value``
+    directives, allowing arbitrary sbatch options without code changes.
+    """
     partition: Optional[str] = None
     time: Optional[str] = None
     nodes: int = 1
@@ -41,19 +48,21 @@ class SlurmConfig:
     ntasks_per_node: Optional[int] = None
     email_begin: Optional[str] = None  # email address for BEGIN notifications
     email_end: Optional[str] = None    # email address for END/FAIL notifications
-    extra_directives: List[str] = field(default_factory=list)
+    extras: Dict[str, Any] = field(default_factory=dict)
 
     def with_overrides(self, overrides: Dict[str, Any]) -> SlurmConfig:
-        """Return a new SlurmConfig with specified fields overridden."""
+        """Return a new SlurmConfig with specified fields overridden.
+
+        Known dataclass fields are set directly.  Unknown keys are stored
+        in ``extras`` and emitted as arbitrary ``#SBATCH`` directives.
+        """
         new = copy.deepcopy(self)
-        valid_fields = {f.name for f in fields(self)}
+        known_fields = {f.name for f in fields(self)}
         for key, value in overrides.items():
-            if key not in valid_fields:
-                raise ValueError(
-                    f"Unknown SLURM override '{key}'. "
-                    f"Valid fields: {sorted(valid_fields)}"
-                )
-            setattr(new, key, value)
+            if key in known_fields:
+                setattr(new, key, value)
+            else:
+                new.extras[key] = value
         return new
 
     def to_sbatch_header(self) -> str:
@@ -85,9 +94,14 @@ class SlurmConfig:
         if mail_types and mail_user:
             lines.append(f"#SBATCH --mail-user={mail_user}")
             lines.append(f"#SBATCH --mail-type={','.join(mail_types)}")
-        for directive in self.extra_directives:
-            d = directive if directive.startswith("--") else f"--{directive}"
-            lines.append(f"#SBATCH {d}")
+        # Arbitrary extra directives
+        for key, value in self.extras.items():
+            k = key if key.startswith("--") else f"--{key}"
+            if isinstance(value, bool):
+                if value:
+                    lines.append(f"#SBATCH {k}")
+            else:
+                lines.append(f"#SBATCH {k}={value}")
         return "\n".join(lines)
 
 
@@ -148,18 +162,15 @@ def parse_backend_config(name: str, raw: Dict[str, Any]) -> BackendConfig:
     slurm_raw = raw.get("slurm")
     slurm = None
     if slurm_raw:
-        slurm = SlurmConfig(
-            partition=slurm_raw.get("partition"),
-            time=slurm_raw.get("time"),
-            nodes=slurm_raw.get("nodes", 1),
-            gpus=slurm_raw.get("gpus"),
-            cpus_per_gpu=slurm_raw.get("cpus_per_gpu"),
-            mem_per_gpu=slurm_raw.get("mem_per_gpu"),
-            ntasks_per_node=slurm_raw.get("ntasks_per_node"),
-            email_begin=slurm_raw.get("email_begin"),
-            email_end=slurm_raw.get("email_end"),
-            extra_directives=slurm_raw.get("extra_directives", []),
-        )
+        known_slurm_keys = {f.name for f in fields(SlurmConfig)}
+        known_kwargs = {}
+        extras = {}
+        for k, v in slurm_raw.items():
+            if k in known_slurm_keys:
+                known_kwargs[k] = v
+            else:
+                extras[k] = v
+        slurm = SlurmConfig(**known_kwargs, extras=extras)
 
     return BackendConfig(
         name=name,
