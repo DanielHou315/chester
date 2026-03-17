@@ -406,16 +406,22 @@ class VariantGenerator(dict):
                 seq_val_list[key] = vals
 
         # Index variants by their identity tuple (all field values)
+        # Convert mutable values (lists) to tuples for hashability
+        def _hashable(val):
+            if isinstance(val, list):
+                return tuple(val)
+            return val
+
         all_keys = [k for k, _, _ in self._variants]
         variant_index = {}
         for i, v in enumerate(variants):
-            identity = tuple(v.get(k) for k in all_keys)
+            identity = tuple(_hashable(v.get(k)) for k in all_keys)
             variant_index[identity] = i
 
         dep_map = {}
         for i, v in enumerate(variants):
             predecessors = []
-            identity = list(v.get(k) for k in all_keys)
+            identity = list(_hashable(v.get(k)) for k in all_keys)
 
             for seq_key in seq_keys:
                 val = v[seq_key]
@@ -431,7 +437,7 @@ class VariantGenerator(dict):
                 key_pos = all_keys.index(seq_key)
                 pred_identity = list(identity)
                 pred_identity[key_pos] = prev_val
-                pred_idx = variant_index.get(tuple(pred_identity))
+                pred_idx = variant_index.get(tuple(_hashable(x) for x in pred_identity))
                 if pred_idx is not None:
                     predecessors.append(pred_idx)
 
@@ -485,11 +491,15 @@ class VariantGenerator(dict):
         if seq_keys:
             dep_map = self.get_dependency_map(ret)
             all_keys = [k for k, _, _ in self._variants]
+
+            def _hashable(val):
+                return tuple(val) if isinstance(val, list) else val
+
             for i, v in enumerate(ret):
-                identity = tuple((k, v.get(k)) for k in all_keys)
+                identity = tuple((k, _hashable(v.get(k))) for k in all_keys)
                 v["_chester_seq_identity"] = identity
                 v["_chester_pred_identities"] = [
-                    tuple((k, ret[j].get(k)) for k in all_keys)
+                    tuple((k, _hashable(ret[j].get(k))) for k in all_keys)
                     for j in dep_map.get(i, [])
                 ]
 
