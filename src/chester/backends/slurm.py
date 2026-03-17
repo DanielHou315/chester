@@ -85,7 +85,10 @@ class SlurmBackend(Backend):
         else:
             lines.append(f"#SBATCH -o {log_dir}/slurm.out")
             lines.append(f"#SBATCH -e {log_dir}/slurm.err")
-        lines.append(f"#SBATCH --job-name={exp_name}")
+        if slurm_output_suffix:
+            lines.append(f"#SBATCH --job-name={exp_name}_{slurm_output_suffix}")
+        else:
+            lines.append(f"#SBATCH --job-name={exp_name}")
 
         # ---- Bash preamble ----
         # Redirect xtrace to a separate file so slurm.err stays clean
