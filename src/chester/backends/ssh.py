@@ -5,7 +5,7 @@ import os
 import shlex
 import subprocess
 from tempfile import NamedTemporaryFile
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import Backend, BackendConfig
 
@@ -33,8 +33,7 @@ class SSHBackend(Backend):
         env: Optional[Dict[str, str]] = None,
         hydra_enabled: bool = False,
         hydra_flags: Optional[Dict[str, Any]] = None,
-        slurm_output_suffix: Optional[str] = None,
-        write_done_marker: bool = True,
+        serial_steps: Optional[List[Tuple[str, list]]] = None,
     ) -> str:
         """Generate a full bash script for SSH-based remote execution.
 
@@ -46,8 +45,12 @@ class SSHBackend(Backend):
         5. Python command with params (wrapped for package manager)
         6. ``touch {log_dir}/.done`` marker on success
 
-        For singularity mode the inner commands (prepare + python + done
-        marker) are wrapped with ``singularity exec``.
+        For singularity mode the inner commands (prepare + python) are
+        wrapped with ``singularity exec``.
+
+        For ``serial_steps``, multiple python commands are generated in the
+        same script (one per step), each wrapped independently with
+        singularity if configured.
 
         Args:
             task: Task dict with ``params`` sub-dict. ``params`` must contain
@@ -57,8 +60,8 @@ class SSHBackend(Backend):
             env: Optional env vars to prepend.
             hydra_enabled: Use Hydra override format for args.
             hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
-            slurm_output_suffix: Suffix for log files (shared_dir support).
-            write_done_marker: Whether to write .done marker (default True).
+            serial_steps: List of (key, [val1, val2, ...]) for order='serial'.
+                  Generates one command per step value in the same script.
 
         Returns:
             Full bash script as a string.
@@ -70,10 +73,7 @@ class SSHBackend(Backend):
         lines: List[str] = []
         lines.append("#!/usr/bin/env bash")
         # Redirect xtrace to a separate file so output.log stays clean
-        if slurm_output_suffix:
-            lines.append(f"exec 19>{log_dir}/chester_xtrace_{slurm_output_suffix}.log")
-        else:
-            lines.append(f"exec 19>{log_dir}/chester_xtrace.log")
+        lines.append(f"exec 19>{log_dir}/chester_xtrace.log")
         lines.append("BASH_XTRACEFD=19")
         lines.append("set -x")
         lines.append("set -u")
@@ -87,21 +87,35 @@ class SSHBackend(Backend):
         # Create overlay image if needed (before singularity exec).
         lines.extend(self.get_overlay_setup_commands())
 
-        command = self.build_python_command(
-            params, script, python_command, env,
-            hydra_enabled, hydra_flags,
-        )
-
-        if self.config.singularity:
-            inner: List[str] = list(self.get_singularity_prepare_commands())
-            inner.append(command)
-            lines.append(self.wrap_with_singularity(inner))
+        if serial_steps:
+            # Generate one command per serial step
+            from ..run_exp import _iter_serial_overrides
+            for step_overrides in _iter_serial_overrides(serial_steps):
+                command = self.build_python_command(
+                    params, script, python_command, env,
+                    hydra_enabled, hydra_flags,
+                    extra_overrides=step_overrides,
+                )
+                if self.config.singularity:
+                    inner: List[str] = list(self.get_singularity_prepare_commands())
+                    inner.append(command)
+                    lines.append(self.wrap_with_singularity(inner))
+                else:
+                    lines.append(command)
         else:
-            lines.append(command)
+            command = self.build_python_command(
+                params, script, python_command, env,
+                hydra_enabled, hydra_flags,
+            )
+            if self.config.singularity:
+                inner: List[str] = list(self.get_singularity_prepare_commands())
+                inner.append(command)
+                lines.append(self.wrap_with_singularity(inner))
+            else:
+                lines.append(command)
 
         # .done marker — always on host, after container exits
-        if write_done_marker:
-            lines.append(f"touch {log_dir}/.done")
+        lines.append(f"touch {log_dir}/.done")
 
         return "\n".join(lines) + "\n"
 

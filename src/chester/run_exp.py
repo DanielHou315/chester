@@ -307,29 +307,29 @@ class VariantGenerator(dict):
                 return param[1]
 
     def add(self, key, vals, **kwargs):
-        if kwargs.get("sequential"):
+        order = kwargs.get("order")
+        if order is not None:
+            if order not in ("serial", "dependent"):
+                raise ValueError(
+                    f"order='{order}' on '{key}' is not valid. "
+                    f"Use order='serial' or order='dependent'."
+                )
             if callable(vals) and not isinstance(vals, list):
                 raise ValueError(
-                    f"sequential=True on '{key}' cannot be used with callable values. "
+                    f"order='{order}' on '{key}' cannot be used with callable values. "
                     f"Provide a concrete list instead."
                 )
             if isinstance(vals, list) and len(vals) < 2:
                 raise ValueError(
-                    f"sequential=True on '{key}' requires at least 2 values, got {len(vals)}"
+                    f"order='{order}' on '{key}' requires at least 2 values, got {len(vals)}"
                 )
-        if kwargs.get("shared_dir"):
-            if not kwargs.get("sequential"):
-                raise ValueError(
-                    f"shared_dir=True on '{key}' requires sequential=True. "
-                    f"Only sequential variants can share a directory."
-                )
-            # Only one shared_dir key allowed
-            existing = [k for k, _, c in self._variants if c.get("shared_dir")]
-            if existing:
-                raise ValueError(
-                    f"shared_dir=True on '{key}' conflicts with existing shared_dir "
-                    f"key '{existing[0]}'. Only one shared_dir key is supported."
-                )
+            if order == "serial":
+                existing = [k for k, _, c in self._variants if c.get("order") == "serial"]
+                if existing:
+                    raise ValueError(
+                        f"order='serial' on '{key}' conflicts with existing serial "
+                        f"key '{existing[0]}'. Only one serial key is supported."
+                    )
         self._variants.append((key, vals, kwargs))
 
     def derive(self, key, fn):
@@ -389,19 +389,19 @@ class VariantGenerator(dict):
         """
         self._derivations.append((key, fn))
 
-    def get_sequential_keys(self) -> list:
-        """Return keys marked with sequential=True."""
-        return [k for k, _, cfg in self._variants if cfg.get("sequential")]
+    def get_dependent_keys(self) -> list:
+        """Return keys marked with order='dependent'."""
+        return [k for k, _, cfg in self._variants if cfg.get("order") == "dependent"]
 
-    def get_shared_dir_keys(self) -> list:
-        """Return keys marked with shared_dir=True."""
-        return [k for k, _, cfg in self._variants if cfg.get("shared_dir")]
+    def get_serial_keys(self) -> list:
+        """Return keys marked with order='serial'."""
+        return [k for k, _, cfg in self._variants if cfg.get("order") == "serial"]
 
     def get_dependency_map(self, variants: list) -> dict:
-        """Compute inter-variant dependency map based on sequential fields.
+        """Compute inter-variant dependency map based on order='dependent' fields.
 
-        For each sequential key, a variant's predecessor is the variant that is
-        identical except the sequential field has the previous value in the list.
+        For each dependent key, a variant's predecessor is the variant that is
+        identical except the dependent field has the previous value in the list.
 
         Args:
             variants: List of variant dicts (from self.variants()).
@@ -410,15 +410,15 @@ class VariantGenerator(dict):
             Dict mapping variant index -> list of predecessor variant indices.
             Variants with no predecessors are omitted.
         """
-        seq_keys = self.get_sequential_keys()
-        if not seq_keys:
+        dep_keys = self.get_dependent_keys()
+        if not dep_keys:
             return {}
 
-        # Build value ordering for each sequential key
+        # Build value ordering for each dependent key
         seq_val_order = {}
         seq_val_list = {}
         for key, vals, cfg in self._variants:
-            if cfg.get("sequential") and isinstance(vals, list):
+            if cfg.get("order") == "dependent" and isinstance(vals, list):
                 seq_val_order[key] = {v: i for i, v in enumerate(vals)}
                 seq_val_list[key] = vals
 
@@ -440,7 +440,7 @@ class VariantGenerator(dict):
             predecessors = []
             identity = list(_hashable(v.get(k)) for k in all_keys)
 
-            for seq_key in seq_keys:
+            for seq_key in dep_keys:
                 val = v[seq_key]
                 order = seq_val_order[seq_key]
                 val_idx = order.get(val, 0)
@@ -483,19 +483,22 @@ class VariantGenerator(dict):
         for key, vals, cfg in self._variants:
             if not isinstance(vals, list):
                 continue
-            if cfg.get("shared_dir"):
-                continue  # shared_dir keys don't affect exp_name
+            if cfg.get("order") == "serial":
+                continue  # serial steps share a directory, don't affect exp_name
             if len(vals) > 1:
                 ret.append(key)
         return ret
 
     def variants(self, randomized=False):
-        # Reject randomized=True when sequential keys exist (check early)
-        seq_keys = self.get_sequential_keys()
-        if seq_keys and randomized:
+        dep_keys = self.get_dependent_keys()
+        serial_keys = self.get_serial_keys()
+        ordered_keys = dep_keys + serial_keys
+
+        if ordered_keys and randomized:
             raise ValueError(
-                "variants(randomized=True) cannot be used with sequential fields. "
-                "Sequential dependencies require deterministic variant ordering."
+                "variants(randomized=True) cannot be used with ordered fields "
+                "(order='serial' or order='dependent'). "
+                "Ordered execution requires deterministic variant ordering."
             )
 
         ret = list(self.ivariants())
@@ -507,7 +510,8 @@ class VariantGenerator(dict):
             for key, fn in self._derivations:
                 variant[key] = fn(variant)
 
-        if seq_keys:
+        # --- order="dependent": inject identity + predecessor metadata ---
+        if dep_keys:
             dep_map = self.get_dependency_map(ret)
             all_keys = [k for k, _, _ in self._variants]
 
@@ -522,37 +526,32 @@ class VariantGenerator(dict):
                     for j in dep_map.get(i, [])
                 ]
 
-        # Inject shared_dir metadata
-        shared_dir_keys = self.get_shared_dir_keys()
-        if shared_dir_keys:
-            non_shared_keys = [k for k, _, cfg in self._variants
-                               if not cfg.get("shared_dir")]
+        # --- order="serial": collapse into single variants with serial steps ---
+        if serial_keys:
+            non_serial_keys = [k for k, _, cfg in self._variants
+                               if cfg.get("order") != "serial"]
 
-            def _hashable_sd(val):
+            def _hashable_s(val):
                 return tuple(val) if isinstance(val, list) else val
 
-            # Group variants by their non-shared-dir field values
-            groups = {}  # group_id -> [variant_indices]
+            # Group variants that are identical except for serial fields
+            groups = {}  # group_id -> [variant_indices] (in order)
             for i, v in enumerate(ret):
-                group_id = tuple(_hashable_sd(v.get(k)) for k in non_shared_keys)
+                group_id = tuple(_hashable_s(v.get(k)) for k in non_serial_keys)
                 groups.setdefault(group_id, []).append(i)
 
+            # Collapse each group into a single variant with _chester_serial_steps
+            collapsed = []
             for group_id, indices in groups.items():
-                for pos, idx in enumerate(indices):
-                    v = ret[idx]
-                    fields = []
-                    for sdk in shared_dir_keys:
-                        short_key = sdk.split('.')[-1]
-                        val = v[sdk]
-                        if isinstance(val, (list, tuple)):
-                            val_str = '_'.join(str(x) for x in val)
-                        else:
-                            val_str = str(val)
-                        fields.append((short_key, val_str))
-                    v["_chester_shared_dir_fields"] = fields
-                    v["_chester_shared_dir_first"] = (pos == 0)
-                    v["_chester_shared_dir_last"] = (pos == len(indices) - 1)
-                    v["_chester_shared_dir_group"] = group_id
+                base = ret[indices[0]]  # Use first variant as base
+                serial_steps = []
+                for sk in serial_keys:
+                    steps = [ret[idx][sk] for idx in indices]
+                    serial_steps.append((sk, steps))
+                base["_chester_serial_steps"] = serial_steps
+                collapsed.append(base)
+
+            ret = collapsed
 
         ret[0]['chester_first_variant'] = True
         ret[-1]['chester_last_variant'] = True
@@ -940,11 +939,23 @@ exp_count = -2
 sub_process_popens = []
 # Module-level registry: (exp_prefix, seq_identity) -> slurm_job_id
 _slurm_job_registry: dict = {}
-# Module-level registry: (exp_prefix, shared_dir_group) -> exp_name
-_shared_dir_registry: dict = {}
 now = datetime.datetime.now(dateutil.tz.tzlocal())
 timestamp = now.strftime('%m_%d_%H_%M')
 remote_confirmed = False
+
+
+def _iter_serial_overrides(serial_steps):
+    """Yield one override dict per serial step.
+
+    serial_steps is a list of (key, [val1, val2, ...]) tuples.
+    For a single serial key with N values, yields N dicts.
+    """
+    if not serial_steps:
+        return
+    # Currently only one serial key is supported
+    key, values = serial_steps[0]
+    for val in values:
+        yield {key: val}
 
 
 def run_experiment_lite(
@@ -1072,27 +1083,23 @@ def run_experiment_lite(
     first_variant = variant.pop('chester_first_variant', False)
     seq_identity = variant.pop("_chester_seq_identity", None)
     pred_identities = variant.pop("_chester_pred_identities", None)
-    shared_dir_fields = variant.pop("_chester_shared_dir_fields", None)
-    shared_dir_first = variant.pop("_chester_shared_dir_first", True)
-    shared_dir_last = variant.pop("_chester_shared_dir_last", True)
-    shared_dir_group = variant.pop("_chester_shared_dir_group", None)
+    serial_steps = variant.pop("_chester_serial_steps", None)
 
     # ----------------------------------------------------------------
     # 4.1. Clear dependency registry on first variant
     # ----------------------------------------------------------------
     if first_variant:
         _slurm_job_registry.clear()
-        _shared_dir_registry.clear()
 
     # ----------------------------------------------------------------
-    # 4.2. Sequential dependency check (non-SLURM guard)
+    # 4.2. Dependency check (non-SLURM guard for order="dependent")
     # ----------------------------------------------------------------
-    has_sequential = seq_identity is not None
+    has_dependent = seq_identity is not None
 
-    if has_sequential and backend_config.type != "slurm" and not skip_dependency_check:
+    if has_dependent and backend_config.type != "slurm" and not skip_dependency_check:
         raise ValueError(
-            "[chester] sequential dependencies (sequential=True in vg.add()) "
-            f"are only enforced on SLURM backends. Current mode: '{mode}'.\n"
+            "[chester] order='dependent' dependencies are only enforced on "
+            f"SLURM backends. Current mode: '{mode}'.\n"
             "Pass skip_dependency_check=True to run_experiment_lite() "
             "to suppress this check when you deliberately want unordered execution."
         )
@@ -1147,15 +1154,7 @@ def run_experiment_lite(
         else:
             data = base64.b64encode(pickle.dumps(call)).decode("utf-8")
         task["args_data"] = data
-
-        # For shared_dir non-first variants, reuse exp_name from the first in group
-        is_shared_reuse = (shared_dir_fields is not None and not shared_dir_first)
-        if is_shared_reuse:
-            cached = _shared_dir_registry.get((exp_prefix, shared_dir_group))
-            if cached:
-                task["exp_name"] = cached
-        else:
-            exp_count += 1
+        exp_count += 1
 
         if task.get("exp_name", None) is None:
             exp_name = exp_prefix
@@ -1176,10 +1175,6 @@ def run_experiment_lite(
                 exp_count = ind + 1
             task["exp_name"] = "{}_{}".format(exp_count, exp_name)
             print('exp name ', task["exp_name"])
-
-        # Register exp_name for shared_dir reuse
-        if shared_dir_fields is not None and shared_dir_first:
-            _shared_dir_registry[(exp_prefix, shared_dir_group)] = task["exp_name"]
 
         # Handle log_dir: user specifies local path, chester maps to remote
         local_log_dir = task.get("log_dir", None)
@@ -1267,15 +1262,31 @@ def run_experiment_lite(
 
         # Dispatch to backend
         if backend_config.type == "local":
-            # Local backend: generate command and run directly
-            command = backend.generate_command(
-                backend_task,
-                script=script,
-                python_command=python_command,
-                env=merged_env or None,
-                hydra_enabled=hydra_enabled,
-                hydra_flags=hydra_flags,
-            )
+            # Local backend: generate command(s) and run directly
+            if serial_steps:
+                # Build one command per serial step, chain with &&
+                commands = []
+                for step_overrides in _iter_serial_overrides(serial_steps):
+                    cmd = backend.generate_command(
+                        backend_task,
+                        script=script,
+                        python_command=python_command,
+                        env=merged_env or None,
+                        hydra_enabled=hydra_enabled,
+                        hydra_flags=hydra_flags,
+                        extra_overrides=step_overrides,
+                    )
+                    commands.append(cmd)
+                command = " && ".join(commands)
+            else:
+                command = backend.generate_command(
+                    backend_task,
+                    script=script,
+                    python_command=python_command,
+                    env=merged_env or None,
+                    hydra_enabled=hydra_enabled,
+                    hydra_flags=hydra_flags,
+                )
 
             if print_command:
                 print(command)
@@ -1304,7 +1315,18 @@ def run_experiment_lite(
                 # For hydra debug mode (in-process, no singularity)
                 from .hydra_utils import run_hydra_command
                 assert hydra_enabled, "hydra_enabled must be True when launch_with_subprocess is False"
-                run_hydra_command(command, task["log_dir"], stub_method_call)
+                if serial_steps:
+                    for step_overrides in _iter_serial_overrides(serial_steps):
+                        step_cmd = backend.generate_command(
+                            backend_task,
+                            script=script, python_command=python_command,
+                            env=merged_env or None,
+                            hydra_enabled=hydra_enabled, hydra_flags=hydra_flags,
+                            extra_overrides=step_overrides,
+                        )
+                        run_hydra_command(step_cmd, task["log_dir"], stub_method_call)
+                else:
+                    run_hydra_command(command, task["log_dir"], stub_method_call)
                 popen_obj = None
 
             return popen_obj
@@ -1321,11 +1343,9 @@ def run_experiment_lite(
             if backend_config.type == "slurm" and slurm_overrides:
                 gen_kwargs["slurm_overrides"] = slurm_overrides
 
-            # Pass shared_dir info for output file naming and .done marker
-            if shared_dir_fields is not None:
-                suffix_parts = [f"{sk}_{sv}" for sk, sv in shared_dir_fields]
-                gen_kwargs["slurm_output_suffix"] = '_'.join(suffix_parts)
-                gen_kwargs["write_done_marker"] = shared_dir_last
+            # For order="serial", pass serial step overrides to the backend
+            if serial_steps:
+                gen_kwargs["serial_steps"] = serial_steps
 
             script_content = backend.generate_script(backend_task, **gen_kwargs)
 
@@ -1369,10 +1389,7 @@ def run_experiment_lite(
                     _slurm_job_registry[(exp_prefix, seq_identity)] = "dry"
 
             # Register job in persistent job store
-            # For shared_dir, only register auto-pull for the last variant
-            # in the group (it's the one that writes .done)
-            should_register_pull = auto_pull and not dry and shared_dir_last
-            if should_register_pull:
+            if auto_pull and not dry:
                 slurm_job_id = submit_result if backend_config.type == "slurm" else None
                 resolved_extra_pull_dirs = _resolve_extra_pull_dirs_v2(
                     extra_pull_dirs, project_path, backend_config.remote_dir

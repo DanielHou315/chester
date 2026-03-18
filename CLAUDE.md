@@ -136,15 +136,16 @@ def run_task(variant, log_dir, exp_name):
 vg = VariantGenerator()
 vg.add('learning_rate', [0.001, 0.01])
 vg.add('batch_size', [32, 64])
-# sequential=True creates SLURM dependency chains (sbatch --dependency=afterok)
-# shared_dir=True makes all sequential steps share the same exp dir
-vg.add('task', ['training', 'evaluate'], sequential=True, shared_dir=True)
+# order="serial" writes all steps in the same script (single SLURM job)
+vg.add('task', ['training', 'evaluate'], order="serial")
+# order="dependent" creates separate SLURM jobs with sbatch --dependency=afterok
+# vg.add('task', ['training', 'evaluate'], order="dependent")
 
 for v in vg.variants():
     run_experiment_lite(
         stub_method_call=run_task,
         variant=v,
-        mode='gl',              # SLURM backend for sequential deps
+        mode='gl',
         exp_prefix='my_experiment',
         auto_pull=True,
         # skip_dependency_check=True  # use for local debug without dep enforcement

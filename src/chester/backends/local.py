@@ -18,6 +18,7 @@ class LocalBackend(Backend):
         env: Optional[Dict[str, str]] = None,
         hydra_enabled: bool = False,
         hydra_flags: Optional[Dict[str, Any]] = None,
+        extra_overrides: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Generate the shell command string for a task.
 
@@ -28,6 +29,8 @@ class LocalBackend(Backend):
             env: Optional env vars to prepend (``KEY=VAL``).
             hydra_enabled: Use Hydra override format for args.
             hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
+            extra_overrides: Optional dict of key/value pairs to merge on top
+                             of the variant before formatting Hydra overrides.
 
         Returns:
             The full command string.
@@ -36,6 +39,7 @@ class LocalBackend(Backend):
         command = self.build_python_command(
             params, script, python_command, env,
             hydra_enabled, hydra_flags,
+            extra_overrides=extra_overrides,
         )
 
         # Host prepare always runs on the host (e.g. direnv, module loads).

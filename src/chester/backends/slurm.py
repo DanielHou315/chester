@@ -5,7 +5,7 @@ import os
 import re
 import shlex
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import Backend, BackendConfig, SlurmConfig
 
@@ -34,8 +34,7 @@ class SlurmBackend(Backend):
         slurm_overrides: Optional[Dict[str, Any]] = None,
         hydra_enabled: bool = False,
         hydra_flags: Optional[Dict[str, Any]] = None,
-        slurm_output_suffix: Optional[str] = None,
-        write_done_marker: bool = True,
+        serial_steps: Optional[List[Tuple[str, list]]] = None,
     ) -> str:
         """Generate a SLURM batch script.
 
@@ -43,11 +42,15 @@ class SlurmBackend(Backend):
         1. SBATCH header from ``SlurmConfig.to_sbatch_header()``
         2. ``#SBATCH -o / -e / --job-name`` directives
         3. ``set -x``, ``set -u``, ``set -e``
-        4. ``srun hostname``
+        4. ``cd {remote_dir}``
         5. ``cd {remote_dir}``
         6. ``module load`` for each module and cuda_module
         7. Inner commands (prepare.sh + python + .done marker), optionally
            wrapped with singularity
+
+        For ``serial_steps``, multiple python commands are generated in the
+        same script (one per step), each wrapped independently with
+        singularity if configured.
 
         Args:
             task: Task dict with ``params`` sub-dict.  ``params`` must contain
@@ -59,6 +62,8 @@ class SlurmBackend(Backend):
             slurm_overrides: Optional dict to override SLURM params per-experiment.
             hydra_enabled: Use Hydra override format for args.
             hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
+            serial_steps: List of (key, [val1, val2, ...]) for order='serial'.
+                  Generates one command per step value in the same script.
 
         Returns:
             Full SLURM batch script as a string.
@@ -79,28 +84,17 @@ class SlurmBackend(Backend):
         lines.append(header)
 
         # Per-job SBATCH directives
-        if slurm_output_suffix:
-            lines.append(f"#SBATCH -o {log_dir}/slurm_{slurm_output_suffix}.out")
-            lines.append(f"#SBATCH -e {log_dir}/slurm_{slurm_output_suffix}.err")
-        else:
-            lines.append(f"#SBATCH -o {log_dir}/slurm.out")
-            lines.append(f"#SBATCH -e {log_dir}/slurm.err")
-        if slurm_output_suffix:
-            lines.append(f"#SBATCH --job-name={exp_name}_{slurm_output_suffix}")
-        else:
-            lines.append(f"#SBATCH --job-name={exp_name}")
+        lines.append(f"#SBATCH -o {log_dir}/slurm.out")
+        lines.append(f"#SBATCH -e {log_dir}/slurm.err")
+        lines.append(f"#SBATCH --job-name={exp_name}")
 
         # ---- Bash preamble ----
         # Redirect xtrace to a separate file so slurm.err stays clean
-        if slurm_output_suffix:
-            lines.append(f"exec 19>{log_dir}/chester_xtrace_{slurm_output_suffix}.log")
-        else:
-            lines.append(f"exec 19>{log_dir}/chester_xtrace.log")
+        lines.append(f"exec 19>{log_dir}/chester_xtrace.log")
         lines.append("BASH_XTRACEFD=19")
         lines.append("set -x")
         lines.append("set -u")
         lines.append("set -e")
-        lines.append("srun hostname")
         lines.append(f"cd {remote_dir}")
 
         # ---- Module loads ----
@@ -117,21 +111,35 @@ class SlurmBackend(Backend):
         # Create overlay image if needed (before singularity exec).
         lines.extend(self.get_overlay_setup_commands())
 
-        command = self.build_python_command(
-            params, script, python_command, env,
-            hydra_enabled, hydra_flags,
-        )
-
-        if self.config.singularity:
-            inner: List[str] = list(self.get_singularity_prepare_commands())
-            inner.append(command)
-            lines.append(self.wrap_with_singularity(inner))
+        if serial_steps:
+            # Generate one command per serial step
+            from ..run_exp import _iter_serial_overrides
+            for step_overrides in _iter_serial_overrides(serial_steps):
+                command = self.build_python_command(
+                    params, script, python_command, env,
+                    hydra_enabled, hydra_flags,
+                    extra_overrides=step_overrides,
+                )
+                if self.config.singularity:
+                    inner: List[str] = list(self.get_singularity_prepare_commands())
+                    inner.append(command)
+                    lines.append(self.wrap_with_singularity(inner))
+                else:
+                    lines.append(command)
         else:
-            lines.append(command)
+            command = self.build_python_command(
+                params, script, python_command, env,
+                hydra_enabled, hydra_flags,
+            )
+            if self.config.singularity:
+                inner: List[str] = list(self.get_singularity_prepare_commands())
+                inner.append(command)
+                lines.append(self.wrap_with_singularity(inner))
+            else:
+                lines.append(command)
 
         # .done marker — always on host, after container exits
-        if write_done_marker:
-            lines.append(f"touch {log_dir}/.done")
+        lines.append(f"touch {log_dir}/.done")
 
         return "\n".join(lines) + "\n"
 

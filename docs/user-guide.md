@@ -373,15 +373,43 @@ contribute to the experiment name hash.  If two variants differ only in derived
 values, they will share the same output directory name — set `exp_name`
 explicitly in the launcher loop if that matters.
 
-### Sequential Dependencies (SLURM only)
+### Ordered Execution (`order=`)
 
-Use `sequential=True` on `vg.add()` to create SLURM job dependency chains
-via `sbatch --dependency=afterok:<jobid>`. Jobs for later values only start
+The `order` flag on `vg.add()` controls how multiple values for a parameter
+are scheduled.
+
+#### `order="serial"` — Single Script, Sequential Commands
+
+All values are written as sequential commands in the **same** script (one
+SLURM job or SSH session). Each step runs after the previous one completes.
+Serial keys are excluded from `variations()` and don't affect `exp_name`.
+
+```python
+vg = VariantGenerator()
+vg.add("experiment.tasks", [("training",), ("evaluate",)], order="serial")
+vg.add("seed", [1, 2, 3])
+
+for v in vg.variants():
+    run_experiment_lite(
+        stub_method_call=train,
+        variant=v,
+        mode="gl",
+        exp_prefix="my_exp",
+    )
+# Each seed produces ONE job with training then evaluate in the same script
+```
+
+Only **one** `order="serial"` key is supported per sweep.
+
+#### `order="dependent"` — Dependent SLURM Jobs
+
+Each value gets its own SLURM job, linked via
+`sbatch --dependency=afterok:<jobid>`. Jobs for later values only start
 after their predecessors complete successfully.
 
 ```python
 vg = VariantGenerator()
-vg.add("task", ["training", "evaluate"], sequential=True)
+vg.add("task", ["training", "evaluate"], order="dependent")
 vg.add("seed", [1, 2, 3])
 
 for v in vg.variants():
@@ -402,12 +430,12 @@ for v in vg.variants():
 3. When submitting a variant with predecessors, the registry is consulted and
    `--dependency=afterok:<id1>:<id2>...` is passed to `sbatch`
 
-**Multiple sequential fields** create per-field independent chains. Each field's
+**Multiple dependent fields** create per-field independent chains. Each field's
 values form their own chain, and a variant waits for all its predecessors:
 
 ```python
-vg.add("task", ["training", "evaluate"], sequential=True)
-vg.add("phase", ["warmup", "finetune"], sequential=True)
+vg.add("task", ["training", "evaluate"], order="dependent")
+vg.add("phase", ["warmup", "finetune"], order="dependent")
 vg.add("seed", [1, 2])
 
 # For seed=1:
@@ -417,7 +445,7 @@ vg.add("seed", [1, 2])
 #   (evaluate, finetune) → depends on (training, finetune) AND (evaluate, warmup)
 ```
 
-**Non-SLURM modes:** Using sequential fields on a non-SLURM backend raises
+**Non-SLURM modes:** Using dependent fields on a non-SLURM backend raises
 `ValueError`. Pass `skip_dependency_check=True` to suppress when you
 deliberately want unordered execution (e.g., local debug runs):
 
@@ -429,32 +457,11 @@ run_experiment_lite(
 )
 ```
 
-#### Shared Directory (`shared_dir=True`)
-
-When sequential steps are phases of the same logical experiment (e.g., training
-then evaluation), use `shared_dir=True` so all steps share the same experiment
-directory instead of creating separate directories per step:
-
-```python
-vg = VariantGenerator()
-vg.add("experiment.tasks", [("training",), ("evaluate",)], sequential=True, shared_dir=True)
-vg.add("seed", [1, 2, 3])
-```
-
-**What changes with `shared_dir=True`:**
-- All sequential values share the same `exp_name` and `log_dir`.
-- SLURM output files are namespaced: `slurm_{field_short_name}_{value}.out`
-  (e.g., `slurm_tasks_training.out`, `slurm_tasks_evaluate.out`).
-- The `.done` marker is only written by the last sequential step.
-- Auto-pull is only registered for the last step.
-- `shared_dir=True` requires `sequential=True`.
-- Only one `shared_dir` key is supported per sweep.
-
 **Constraints:**
 
-- `sequential=True` requires a concrete list with at least 2 values (not a lambda)
-- `variants(randomized=True)` raises `ValueError` when sequential fields exist
-- `sequential` is only supported on `vg.add()`, not `vg.derive()`
+- `order=` requires a concrete list with at least 2 values (not a lambda)
+- `variants(randomized=True)` raises `ValueError` when ordered fields exist
+- `order` is only supported on `vg.add()`, not `vg.derive()`
 
 ### Hidden Parameters
 
@@ -918,7 +925,7 @@ run_experiment_lite(
     # SLURM
     slurm_overrides=None,            # per-experiment SLURM param overrides
     use_singularity=None,            # True/False/None (None = use backend default)
-    skip_dependency_check=False,     # skip ValueError when sequential deps on non-SLURM
+    skip_dependency_check=False,     # skip ValueError when order='dependent' on non-SLURM
 
     # Hydra
     hydra_enabled=False,             # use Hydra command format

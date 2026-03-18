@@ -99,12 +99,6 @@ def test_slurm_script_has_set_flags():
     assert "set -e" in script
 
 
-def test_slurm_script_has_srun_hostname():
-    backend = _make_backend()
-    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
-    script = backend.generate_script(task, script="train.py")
-    assert "srun hostname" in script
-
 
 def test_slurm_script_cds_to_remote_dir():
     backend = _make_backend(remote_dir="/home/user/myproject")

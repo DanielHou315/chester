@@ -468,15 +468,43 @@ Hide a parameter from the auto-generated experiment name:
 vg.add('seed', [1, 2, 3], hide=True)
 ```
 
-### Sequential Dependencies (SLURM only)
+### Ordered Execution (`order=`)
 
-Mark a parameter as `sequential=True` to create SLURM job dependency chains.
-Jobs for later values in the list will only start after the preceding value's
-job completes successfully (via `sbatch --dependency=afterok:<jobid>`).
+The `order` flag on `vg.add()` controls how multiple values for a parameter
+are scheduled:
+
+#### `order="serial"` — Single Script, Sequential Commands
+
+All values are written as sequential commands in the **same** script (one
+SLURM job or SSH session). Each step runs after the previous one completes.
 
 ```python
 vg = VariantGenerator()
-vg.add("task", ["training", "evaluate"], sequential=True)
+vg.add("experiment.tasks", [("training",), ("evaluate",)], order="serial")
+vg.add("seed", [1, 2, 3])
+
+for v in vg.variants():
+    run_experiment_lite(
+        stub_method_call=run_task,
+        variant=v,
+        mode="gl",
+        exp_prefix="my_exp",
+    )
+# Each seed produces ONE job with training then evaluate in the same script
+```
+
+- Serial values are collapsed into a single variant with
+  `_chester_serial_steps` metadata.
+- Serial keys are excluded from `variations()` (they don't affect `exp_name`).
+- Only **one** `order="serial"` key is supported per sweep.
+
+#### `order="dependent"` — Dependent SLURM Jobs
+
+Each value gets its own SLURM job, linked via `sbatch --dependency=afterok:<jobid>`.
+
+```python
+vg = VariantGenerator()
+vg.add("task", ["training", "evaluate"], order="dependent")
 vg.add("seed", [1, 2, 3])
 
 for v in vg.variants():
@@ -489,46 +517,22 @@ for v in vg.variants():
 # For each seed: evaluate waits for training to finish
 ```
 
-**Multiple sequential fields** create per-field independent chains:
+**Multiple dependent fields** create per-field independent chains:
 
 ```python
-vg.add("task", ["training", "evaluate"], sequential=True)
-vg.add("phase", ["warmup", "finetune"], sequential=True)
+vg.add("task", ["training", "evaluate"], order="dependent")
+vg.add("phase", ["warmup", "finetune"], order="dependent")
 # (evaluate, finetune) depends on (training, finetune) AND (evaluate, warmup)
 ```
 
-**Non-SLURM modes** raise `ValueError` if sequential dependencies exist — pass
+**Non-SLURM modes** raise `ValueError` if dependent fields exist — pass
 `skip_dependency_check=True` to suppress when you deliberately want unordered
 execution (e.g., local debug runs).
 
-### Shared Directory (`shared_dir=True`)
-
-When sequential steps are phases of the same logical experiment (e.g., training
-then evaluation), use `shared_dir=True` so all steps share the same experiment
-directory:
-
-```python
-vg = VariantGenerator()
-vg.add("experiment.tasks", [("training",), ("evaluate",)], sequential=True, shared_dir=True)
-vg.add("seed", [1, 2, 3])
-```
-
-**Behaviour:**
-- All sequential values produce the same `exp_name` and `log_dir` — outputs
-  accumulate in a single directory instead of separate ones per step.
-- SLURM output files are namespaced by value:
-  `slurm_{field_short_name}_{value}.out` (e.g., `slurm_tasks_training.out`).
-- The `.done` marker is only written by the **last** sequential step.
-- Auto-pull is only registered for the **last** step.
-
 **Constraints:**
-- `shared_dir=True` requires `sequential=True`.
-- Only **one** `shared_dir` key is supported per sweep.
-
-**Constraints (sequential):**
-- `sequential=True` requires a concrete list with at least 2 values (not a lambda)
-- `variants(randomized=True)` is incompatible with sequential fields
-- `sequential` is only supported on `vg.add()`, not `vg.derive()`
+- `order=` requires a concrete list with at least 2 values (not a lambda)
+- `variants(randomized=True)` is incompatible with ordered fields
+- `order` is only supported on `vg.add()`, not `vg.derive()`
 
 ### Randomised Order
 
@@ -537,7 +541,7 @@ for v in vg.variants(randomized=True):
     ...
 ```
 
-> **Note:** `randomized=True` cannot be used when any parameter has `sequential=True`.
+> **Note:** `randomized=True` cannot be used when any parameter has `order=`.
 
 ---
 
@@ -687,7 +691,7 @@ run_experiment_lite(
 
     # ── SLURM ─────────────────────────────────────────────────────────────────
     slurm_overrides=None,       # dict of SlurmConfig fields to override per-run
-    skip_dependency_check=False, # skip ValueError when sequential deps used on non-SLURM
+    skip_dependency_check=False, # skip ValueError when order='dependent' used on non-SLURM
 
     # ── Singularity ───────────────────────────────────────────────────────────
     use_singularity=None,       # True/False to override backend config; None = use config

@@ -3,48 +3,70 @@ import pytest
 from chester.run_exp import run_experiment_lite, VariantGenerator
 
 
-class TestSequentialMetadata:
-    def test_get_sequential_keys_none(self):
+class TestOrderMetadata:
+    def test_get_dependent_keys_none(self):
         vg = VariantGenerator()
         vg.add("lr", [0.01, 0.1])
         vg.add("seed", [1, 2])
-        assert vg.get_sequential_keys() == []
+        assert vg.get_dependent_keys() == []
 
-    def test_get_sequential_keys_one(self):
+    def test_get_dependent_keys_one(self):
         vg = VariantGenerator()
-        vg.add("task", ["training", "evaluate"], sequential=True)
+        vg.add("task", ["training", "evaluate"], order="dependent")
         vg.add("seed", [1, 2])
-        assert vg.get_sequential_keys() == ["task"]
+        assert vg.get_dependent_keys() == ["task"]
 
-    def test_get_sequential_keys_multiple(self):
+    def test_get_dependent_keys_multiple(self):
         vg = VariantGenerator()
-        vg.add("task", ["training", "evaluate"], sequential=True)
+        vg.add("task", ["training", "evaluate"], order="dependent")
         vg.add("seed", [1, 2])
-        vg.add("phase", ["warmup", "finetune"], sequential=True)
-        assert set(vg.get_sequential_keys()) == {"task", "phase"}
+        vg.add("phase", ["warmup", "finetune"], order="dependent")
+        assert set(vg.get_dependent_keys()) == {"task", "phase"}
 
-    def test_sequential_single_value_raises(self):
+    def test_get_serial_keys(self):
+        vg = VariantGenerator()
+        vg.add("task", ["training", "evaluate"], order="serial")
+        vg.add("seed", [1, 2])
+        assert vg.get_serial_keys() == ["task"]
+
+    def test_order_single_value_raises(self):
         vg = VariantGenerator()
         with pytest.raises(ValueError, match="at least 2 values"):
-            vg.add("task", ["training"], sequential=True)
+            vg.add("task", ["training"], order="dependent")
 
-    def test_sequential_with_callable_raises(self):
+    def test_serial_single_value_raises(self):
+        vg = VariantGenerator()
+        with pytest.raises(ValueError, match="at least 2 values"):
+            vg.add("task", ["training"], order="serial")
+
+    def test_order_with_callable_raises(self):
         vg = VariantGenerator()
         with pytest.raises(ValueError, match="cannot be used with callable"):
-            vg.add("task", lambda seed: ["train", "eval"], sequential=True)
+            vg.add("task", lambda seed: ["train", "eval"], order="dependent")
+
+    def test_invalid_order_raises(self):
+        vg = VariantGenerator()
+        with pytest.raises(ValueError, match="not valid"):
+            vg.add("task", ["a", "b"], order="parallel")
+
+    def test_multiple_serial_keys_raises(self):
+        vg = VariantGenerator()
+        vg.add("task", ["training", "evaluate"], order="serial")
+        with pytest.raises(ValueError, match="Only one serial key"):
+            vg.add("phase", ["warmup", "finetune"], order="serial")
 
 
 class TestDependencyMap:
-    def test_no_sequential_keys(self):
+    def test_no_dependent_keys(self):
         vg = VariantGenerator()
         vg.add("lr", [0.01, 0.1])
         variants = vg.variants()
         dep_map = vg.get_dependency_map(variants)
         assert dep_map == {}
 
-    def test_single_sequential_field(self):
+    def test_single_dependent_field(self):
         vg = VariantGenerator()
-        vg.add("task", ["training", "evaluate"], sequential=True)
+        vg.add("task", ["training", "evaluate"], order="dependent")
         vg.add("seed", [1, 2])
         variants = vg.variants()
         dep_map = vg.get_dependency_map(variants)
@@ -60,10 +82,10 @@ class TestDependencyMap:
         assert dep_map[find("evaluate", 1)] == [find("training", 1)]
         assert dep_map[find("evaluate", 2)] == [find("training", 2)]
 
-    def test_two_sequential_fields(self):
+    def test_two_dependent_fields(self):
         vg = VariantGenerator()
-        vg.add("task", ["training", "evaluate"], sequential=True)
-        vg.add("phase", ["warmup", "finetune"], sequential=True)
+        vg.add("task", ["training", "evaluate"], order="dependent")
+        vg.add("phase", ["warmup", "finetune"], order="dependent")
         variants = vg.variants()
         dep_map = vg.get_dependency_map(variants)
 
@@ -91,7 +113,7 @@ class TestDependencyMap:
 
     def test_three_value_chain(self):
         vg = VariantGenerator()
-        vg.add("stage", ["prep", "train", "eval"], sequential=True)
+        vg.add("stage", ["prep", "train", "eval"], order="dependent")
         variants = vg.variants()
         dep_map = vg.get_dependency_map(variants)
 
@@ -105,10 +127,10 @@ class TestDependencyMap:
         assert dep_map[find("eval")] == [find("train")]
 
 
-class TestVariantSequentialMetadata:
+class TestVariantDependentMetadata:
     def test_variants_carry_seq_identity(self):
         vg = VariantGenerator()
-        vg.add("task", ["training", "evaluate"], sequential=True)
+        vg.add("task", ["training", "evaluate"], order="dependent")
         vg.add("seed", [1, 2])
         variants = vg.variants()
         for v in variants:
@@ -117,7 +139,7 @@ class TestVariantSequentialMetadata:
 
     def test_variants_carry_pred_identities(self):
         vg = VariantGenerator()
-        vg.add("task", ["training", "evaluate"], sequential=True)
+        vg.add("task", ["training", "evaluate"], order="dependent")
         vg.add("seed", [1, 2])
         variants = vg.variants()
         for v in variants:
@@ -129,7 +151,7 @@ class TestVariantSequentialMetadata:
             else:
                 assert len(v["_chester_pred_identities"]) == 1
 
-    def test_no_seq_metadata_when_no_sequential(self):
+    def test_no_dep_metadata_when_no_dependent(self):
         vg = VariantGenerator()
         vg.add("lr", [0.01, 0.1])
         variants = vg.variants()
@@ -137,11 +159,62 @@ class TestVariantSequentialMetadata:
             assert "_chester_seq_identity" not in v
             assert "_chester_pred_identities" not in v
 
-    def test_randomized_with_sequential_raises(self):
+    def test_randomized_with_dependent_raises(self):
         vg = VariantGenerator()
-        vg.add("task", ["training", "evaluate"], sequential=True)
+        vg.add("task", ["training", "evaluate"], order="dependent")
         with pytest.raises(ValueError, match="randomized"):
             vg.variants(randomized=True)
+
+    def test_randomized_with_serial_raises(self):
+        vg = VariantGenerator()
+        vg.add("task", ["training", "evaluate"], order="serial")
+        with pytest.raises(ValueError, match="randomized"):
+            vg.variants(randomized=True)
+
+
+class TestSerialVariants:
+    def test_serial_collapses_variants(self):
+        """order='serial' should collapse cross-product into single variants."""
+        vg = VariantGenerator()
+        vg.add("task", ["training", "evaluate"], order="serial")
+        vg.add("seed", [1, 2])
+        variants = vg.variants()
+        # 2 seeds, serial tasks collapsed: should be 2 variants
+        assert len(variants) == 2
+
+    def test_serial_carries_steps(self):
+        """Collapsed variants should carry _chester_serial_steps metadata."""
+        vg = VariantGenerator()
+        vg.add("task", ["training", "evaluate"], order="serial")
+        vg.add("seed", [1])
+        variants = vg.variants()
+        assert len(variants) == 1
+        v = variants[0]
+        assert "_chester_serial_steps" in v
+        steps = v["_chester_serial_steps"]
+        assert len(steps) == 1
+        key, vals = steps[0]
+        assert key == "task"
+        assert vals == ["training", "evaluate"]
+
+    def test_serial_excluded_from_variations(self):
+        """Serial keys should not appear in variations() (don't affect exp_name)."""
+        vg = VariantGenerator()
+        vg.add("task", ["training", "evaluate"], order="serial")
+        vg.add("seed", [1, 2])
+        variations = vg.variations()
+        assert "task" not in variations
+        assert "seed" in variations
+
+    def test_serial_no_dep_metadata(self):
+        """Serial variants should not carry dependency metadata."""
+        vg = VariantGenerator()
+        vg.add("task", ["training", "evaluate"], order="serial")
+        vg.add("seed", [1])
+        variants = vg.variants()
+        for v in variants:
+            assert "_chester_seq_identity" not in v
+            assert "_chester_pred_identities" not in v
 
 
 class TestRunExpDependencyWiring:
@@ -158,18 +231,18 @@ backends:
 """)
         return chester_dir
 
-    def test_non_slurm_with_sequential_raises(self, tmp_path):
-        """Non-SLURM mode with sequential deps should raise ValueError."""
+    def test_non_slurm_with_dependent_raises(self, tmp_path):
+        """Non-SLURM mode with order='dependent' should raise ValueError."""
         chester_dir = self._make_local_config(tmp_path)
         old_cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
             os.environ["CHESTER_CONFIG_PATH"] = str(chester_dir / "config.yaml")
             vg = VariantGenerator()
-            vg.add("task", ["training", "evaluate"], sequential=True)
+            vg.add("task", ["training", "evaluate"], order="dependent")
             variants = vg.variants()
 
-            with pytest.raises(ValueError, match="sequential dependencies"):
+            with pytest.raises(ValueError, match="order='dependent'"):
                 run_experiment_lite(
                     stub_method_call=lambda v, log_dir, exp_name: None,
                     variant=variants[0],
@@ -191,7 +264,7 @@ backends:
         try:
             os.environ["CHESTER_CONFIG_PATH"] = str(chester_dir / "config.yaml")
             vg = VariantGenerator()
-            vg.add("task", ["training", "evaluate"], sequential=True)
+            vg.add("task", ["training", "evaluate"], order="dependent")
             variants = vg.variants()
 
             # Should not raise
@@ -208,8 +281,8 @@ backends:
             os.chdir(old_cwd)
             os.environ.pop("CHESTER_CONFIG_PATH", None)
 
-    def test_no_sequential_no_warning(self, tmp_path):
-        """No sequential fields -> no dependency check, no raise."""
+    def test_no_order_no_warning(self, tmp_path):
+        """No ordered fields -> no dependency check, no raise."""
         chester_dir = self._make_local_config(tmp_path)
         old_cwd = os.getcwd()
         os.chdir(tmp_path)
@@ -233,11 +306,11 @@ backends:
             os.environ.pop("CHESTER_CONFIG_PATH", None)
 
 
-class TestSequentialIntegration:
-    """End-to-end test simulating a launcher loop with sequential deps on SLURM."""
+class TestDependentIntegration:
+    """End-to-end test simulating a launcher loop with order='dependent' on SLURM."""
 
     def test_slurm_dependency_chain(self, monkeypatch, tmp_path):
-        """Simulate launching sequential variants and verify dependency flags."""
+        """Simulate launching dependent variants and verify dependency flags."""
         import chester.run_exp as run_exp
 
         # Set up config with a SLURM backend
@@ -269,7 +342,7 @@ backends:
             run_exp._slurm_job_registry.clear()
 
             vg = VariantGenerator()
-            vg.add("task", ["training", "evaluate"], sequential=True)
+            vg.add("task", ["training", "evaluate"], order="dependent")
             vg.add("seed", [1])
             variants = vg.variants()
 

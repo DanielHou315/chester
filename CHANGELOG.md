@@ -5,40 +5,35 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [1.2.0] - 2026-03-16
+## [1.2.0] - 2026-03-17
 
 ### New Features
 
-#### `sequential=True` — SLURM job dependency chains
+#### `order=` flag — ordered execution modes
 
-`vg.add()` now accepts `sequential=True` to create inter-job SLURM dependency
-chains via `sbatch --dependency=afterok:<jobid>`.  Jobs for later values in the
-list only start after their predecessors complete successfully.
+`vg.add()` now accepts an `order` flag to control how multiple values for a
+parameter are scheduled:
 
-```python
-vg = VariantGenerator()
-vg.add("task", ["training", "evaluate"], sequential=True)
-vg.add("seed", [1, 2, 3])
-
-for v in vg.variants():
-    run_experiment_lite(stub_method_call=run_task, variant=v, mode="gl", ...)
-# For each seed: evaluate waits for training to finish
-```
-
-Multiple sequential fields create per-field independent chains.  Non-SLURM
-modes raise `ValueError` unless `skip_dependency_check=True` is passed.
-
-#### `shared_dir=True` — shared experiment directory for sequential steps
-
-`vg.add(..., sequential=True, shared_dir=True)` makes all sequential values
-share the same `exp_name` and `log_dir`.  SLURM output files are namespaced
-(`slurm_{field_short_name}_{value}.out`), the `.done` marker is only written by
-the last step, and auto-pull is only registered for the last step.  Only one
-`shared_dir` key is supported per sweep.
+**`order="serial"`** — writes all values as sequential commands in the **same**
+script (single SLURM job or SSH session).  Serial keys are excluded from
+`variations()` and do not affect `exp_name`.  Only one serial key per sweep.
 
 ```python
-vg.add("experiment.tasks", [("training",), ("evaluate",)], sequential=True, shared_dir=True)
+vg.add("experiment.tasks", [("training",), ("evaluate",)], order="serial")
+# One SLURM job per seed, with training then evaluate in the same script
 ```
+
+**`order="dependent"`** — each value gets its own SLURM job, linked via
+`sbatch --dependency=afterok:<jobid>`.  Multiple dependent fields create
+per-field independent chains.
+
+```python
+vg.add("task", ["training", "evaluate"], order="dependent")
+# For each seed: evaluate job waits for training job to finish
+```
+
+Non-SLURM modes raise `ValueError` for `order="dependent"` unless
+`skip_dependency_check=True` is passed.
 
 #### `confirm_action()` — unified confirmation prompts
 
@@ -48,9 +43,12 @@ deprecated with a `DeprecationWarning`.
 
 ### Breaking Changes
 
+- **`sequential=True` and `shared_dir=True` removed.** Use `order="serial"` or
+  `order="dependent"` instead.  `order="serial"` replaces the combined
+  `sequential=True, shared_dir=True` pattern.  `order="dependent"` replaces
+  `sequential=True` alone.
 - **`sequential_steps` removed.** The `sequential_steps` parameter on
-  `run_experiment_lite` and all backends has been removed.  Use
-  `vg.add(..., sequential=True)` for SLURM dependency chains instead.
+  `run_experiment_lite` and all backends has been removed.
 
 ### Bug Fixes
 
