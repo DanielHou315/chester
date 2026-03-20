@@ -98,10 +98,17 @@ class SlurmBackend(Backend):
         lines.append(f"cd {remote_dir}")
 
         # ---- Module loads ----
+        # Suppress LMOD's "Shell debugging temporarily silenced" stderr noise
+        # by disabling xtrace around module calls.
+        has_modules = self.config.modules or self.config.cuda_module
+        if has_modules:
+            lines.append("{ set +x; } 2>/dev/null")
         for mod in self.config.modules:
             lines.append(f"module load {mod}")
         if self.config.cuda_module:
             lines.append(f"module load {self.config.cuda_module}")
+        if has_modules:
+            lines.append("set -x")
 
         # ---- Prepare + inner commands ----
         # Backend prepare.sh always runs on the host (module loads, etc.).
