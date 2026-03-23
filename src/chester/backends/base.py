@@ -417,12 +417,10 @@ def _rewrite_mounts_for_worktrees(
         New list of mount strings with sources rewritten where applicable.
         The input list is not mutated.
     """
-    import os as _os
-
     result = []
     # Pre-compute absolute submodule paths once
     abs_submodules = {
-        sub: _os.path.normpath(_os.path.join(remote_dir, sub))
+        sub: os.path.normpath(os.path.join(remote_dir, sub))
         for sub in submodule_worktrees
     }
 
@@ -438,10 +436,10 @@ def _rewrite_mounts_for_worktrees(
             continue
 
         # Resolve relative src to absolute remote path
-        if not _os.path.isabs(src):
-            abs_src = _os.path.normpath(_os.path.join(remote_dir, src))
+        if not os.path.isabs(src):
+            abs_src = os.path.normpath(os.path.join(remote_dir, src))
         else:
-            abs_src = _os.path.normpath(src)
+            abs_src = os.path.normpath(src)
 
         new_src = None
         for sub_path, wt_path in submodule_worktrees.items():
@@ -450,7 +448,7 @@ def _rewrite_mounts_for_worktrees(
                 new_src = wt_path
                 break
             # Explicit /sep guard prevents IsaacLabTactile_v2 matching IsaacLabTactile
-            if abs_src.startswith(abs_sub + _os.sep):
+            if abs_src.startswith(abs_sub + os.sep):
                 suffix = abs_src[len(abs_sub):]  # includes leading sep
                 new_src = wt_path + suffix
                 break

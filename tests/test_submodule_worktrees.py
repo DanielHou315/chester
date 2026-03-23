@@ -1,4 +1,3 @@
-import pytest
 from chester.backends.base import _rewrite_mounts_for_worktrees
 
 
