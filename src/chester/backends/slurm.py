@@ -7,7 +7,13 @@ import shlex
 import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import Backend, BackendConfig, SlurmConfig
+from .base import (
+    Backend,
+    BackendConfig,
+    SlurmConfig,
+    _build_worktree_setup_commands,
+    _rewrite_mounts_for_worktrees,
+)
 
 
 class SlurmBackend(Backend):
@@ -66,6 +72,11 @@ class SlurmBackend(Backend):
             hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
             serial_steps: List of (key, [val1, val2, ...]) for order='serial'.
                   Generates one command per step value in the same script.
+            submodule_worktrees: Optional mapping of submodule path to absolute
+                remote worktree path. When set, mounts for these submodules are
+                redirected to the worktree. Requires ``submodule_resolved_commits``.
+            submodule_resolved_commits: Optional mapping of submodule path to full
+                40-char SHA. Required when ``submodule_worktrees`` is set.
 
         Returns:
             Full SLURM batch script as a string.
@@ -119,7 +130,6 @@ class SlurmBackend(Backend):
 
         # ---- Submodule worktree setup (before overlay and singularity) ----
         if submodule_worktrees:
-            from .base import _build_worktree_setup_commands, _rewrite_mounts_for_worktrees
             lines.extend(_build_worktree_setup_commands(
                 submodule_worktrees, submodule_resolved_commits, remote_dir
             ))
