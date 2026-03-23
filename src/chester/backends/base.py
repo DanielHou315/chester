@@ -383,3 +383,84 @@ class Backend(ABC):
         inner = " && ".join(executable)
         parts.extend(["/bin/bash", "-c", shlex.quote(inner)])
         return " ".join(parts)
+
+
+def _rewrite_mounts_for_worktrees(
+    mounts: List[str],
+    submodule_worktrees: Dict[str, str],
+    remote_dir: str,
+) -> List[str]:
+    """Rewrite mount sources that fall under a pinned submodule worktree.
+
+    For each mount whose host-side source resolves to a path under a pinned
+    submodule, replaces the submodule root prefix with the worktree path.
+
+    The ``/`` suffix guard in the prefix check prevents false matches
+    (e.g. submodule ``IsaacLabTactile`` does NOT match ``IsaacLabTactile_v2``).
+
+    Mounts whose source starts with ``~`` or ``$`` are left untouched
+    (shell-expanded at runtime, cannot be statically resolved).
+
+    NOTE: Returns absolute worktree paths (not $CHESTER_WT_N bash variable
+    references). The spec describes bash variable refs in mounts, but using
+    absolute paths is functionally equivalent and simpler — the path is fully
+    known at generation time. The CHESTER_WT_N variables are still emitted
+    for git worktree add and cleanup; they just aren't needed in the -B flags.
+
+    Args:
+        mounts: List of mount strings in ``src:dst`` or bare ``src`` format.
+        submodule_worktrees: Mapping of submodule path (relative to project
+            root) to absolute remote worktree path.
+        remote_dir: Absolute path of the remote project root.
+
+    Returns:
+        New list of mount strings with sources rewritten where applicable.
+        The input list is not mutated.
+    """
+    import os as _os
+
+    result = []
+    # Pre-compute absolute submodule paths once
+    abs_submodules = {
+        sub: _os.path.normpath(_os.path.join(remote_dir, sub))
+        for sub in submodule_worktrees
+    }
+
+    for mount in mounts:
+        if ":" in mount:
+            src, dst = mount.split(":", 1)
+        else:
+            src, dst = mount, None
+
+        # Leave shell-expanded paths untouched
+        if src.startswith(("~", "$")):
+            result.append(mount)
+            continue
+
+        # Resolve relative src to absolute remote path
+        if not _os.path.isabs(src):
+            abs_src = _os.path.normpath(_os.path.join(remote_dir, src))
+        else:
+            abs_src = _os.path.normpath(src)
+
+        new_src = None
+        for sub_path, wt_path in submodule_worktrees.items():
+            abs_sub = abs_submodules[sub_path]
+            if abs_src == abs_sub:
+                new_src = wt_path
+                break
+            # Explicit /sep guard prevents IsaacLabTactile_v2 matching IsaacLabTactile
+            if abs_src.startswith(abs_sub + _os.sep):
+                suffix = abs_src[len(abs_sub):]  # includes leading sep
+                new_src = wt_path + suffix
+                break
+
+        if new_src is None:
+            # No submodule matched — return the original mount string unchanged
+            result.append(mount)
+        elif dst is not None:
+            result.append(f"{new_src}:{dst}")
+        else:
+            result.append(new_src)
+
+    return result
