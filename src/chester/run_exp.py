@@ -673,7 +673,7 @@ def rsync_code_v2(remote_host, remote_dir, project_path, rsync_include, rsync_ex
     if not rsync_include and not rsync_exclude:
         print('[chester] Warning: no rsync_include/rsync_exclude defined, syncing entire project')
 
-    cmd = ["rsync", "-avzhK", "--info=progress2", "--delete"]
+    cmd = ["rsync", "-avzhK", "--info=progress2", "--delete", "--skip-compress=sif/img/iso/gz/bz2/xz/zst/zip/7z"]
     for p in (rsync_include or []):
         cmd.append(f"--include={p}")
     for p in (rsync_exclude or []):
