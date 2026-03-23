@@ -283,3 +283,85 @@ class TestSlurmDependency:
         sbatch_cmd = [c for c in captured_commands if any("sbatch" in str(x) for x in c)]
         sbatch_str = " ".join(str(x) for x in sbatch_cmd[0])
         assert "--dependency" not in sbatch_str
+
+
+# ---------------------------------------------------------------------------
+# Worktree injection tests
+# ---------------------------------------------------------------------------
+
+from chester.backends.base import SingularityConfig
+
+
+def _make_singularity_backend(mounts=None):
+    sing = SingularityConfig(
+        image="myimage.sif",
+        mounts=mounts or [
+            "IsaacLabTactile/source:/workspace/IsaacLabTactile/source",
+            "IsaacLabTactile/apps:/workspace/IsaacLabTactile/apps",
+            "configs:/workspace/configs",
+        ],
+        gpu=True,
+        fakeroot=False,
+    )
+    return _make_backend(singularity=sing, remote_dir="/home/user/project")
+
+
+def test_slurm_generate_script_with_worktrees_injects_setup():
+    backend = _make_singularity_backend()
+    task = {"params": {"log_dir": "/remote/logs/exp1"}}
+    worktrees = {"IsaacLabTactile": "/home/user/project/IsaacLabTactile/.worktrees/wt0"}
+    commits = {"IsaacLabTactile": "a" * 40}
+    script = backend.generate_script(
+        task, script="train.py",
+        submodule_worktrees=worktrees,
+        submodule_resolved_commits=commits,
+    )
+    assert "CHESTER_WT_0=" in script
+    assert "_chester_wt_cleanup" in script
+    assert "trap '_chester_wt_cleanup' EXIT" in script
+    assert "git -C" in script and "worktree add" in script
+
+
+def test_slurm_generate_script_with_worktrees_rewrites_mounts():
+    backend = _make_singularity_backend()
+    task = {"params": {"log_dir": "/remote/logs/exp1"}}
+    worktrees = {"IsaacLabTactile": "/home/user/project/IsaacLabTactile/.worktrees/wt0"}
+    commits = {"IsaacLabTactile": "a" * 40}
+    script = backend.generate_script(
+        task, script="train.py",
+        submodule_worktrees=worktrees,
+        submodule_resolved_commits=commits,
+    )
+    # Rewritten mount must appear (worktree path in -B flags)
+    assert "/.worktrees/wt0/source" in script
+    assert "/.worktrees/wt0/apps" in script
+    # configs (non-submodule) mount must still appear unchanged
+    assert "configs:/workspace/configs" in script
+
+
+def test_slurm_generate_script_without_worktrees_unchanged():
+    backend = _make_singularity_backend()
+    task = {"params": {"log_dir": "/remote/logs/exp1"}}
+    script_no_args = backend.generate_script(task, script="train.py")
+    script_explicit_none = backend.generate_script(
+        task, script="train.py",
+        submodule_worktrees=None,
+        submodule_resolved_commits=None,
+    )
+    assert script_no_args == script_explicit_none
+    assert "CHESTER_WT" not in script_no_args
+
+
+def test_slurm_generate_script_worktrees_setup_before_singularity():
+    backend = _make_singularity_backend()
+    task = {"params": {"log_dir": "/remote/logs/exp1"}}
+    worktrees = {"IsaacLabTactile": "/home/user/project/IsaacLabTactile/.worktrees/wt0"}
+    commits = {"IsaacLabTactile": "a" * 40}
+    script = backend.generate_script(
+        task, script="train.py",
+        submodule_worktrees=worktrees,
+        submodule_resolved_commits=commits,
+    )
+    wt_pos = script.index("CHESTER_WT_0=")
+    sing_pos = script.index("singularity exec")
+    assert wt_pos < sing_pos

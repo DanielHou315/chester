@@ -35,6 +35,8 @@ class SlurmBackend(Backend):
         hydra_enabled: bool = False,
         hydra_flags: Optional[Dict[str, Any]] = None,
         serial_steps: Optional[List[Tuple[str, list]]] = None,
+        submodule_worktrees: Optional[Dict[str, str]] = None,
+        submodule_resolved_commits: Optional[Dict[str, str]] = None,
     ) -> str:
         """Generate a SLURM batch script.
 
@@ -115,6 +117,20 @@ class SlurmBackend(Backend):
         prepare_cmds = self.get_prepare_commands()
         lines.extend(prepare_cmds)
 
+        # ---- Submodule worktree setup (before overlay and singularity) ----
+        if submodule_worktrees:
+            from .base import _build_worktree_setup_commands, _rewrite_mounts_for_worktrees
+            lines.extend(_build_worktree_setup_commands(
+                submodule_worktrees, submodule_resolved_commits, remote_dir
+            ))
+            rewritten_mounts = _rewrite_mounts_for_worktrees(
+                self.config.singularity.mounts if self.config.singularity else [],
+                submodule_worktrees,
+                remote_dir,
+            )
+        else:
+            rewritten_mounts = None
+
         # Create overlay image if needed (before singularity exec).
         lines.extend(self.get_overlay_setup_commands())
 
@@ -130,7 +146,7 @@ class SlurmBackend(Backend):
                 if self.config.singularity:
                     inner: List[str] = list(self.get_singularity_prepare_commands())
                     inner.append(command)
-                    lines.append(self.wrap_with_singularity(inner))
+                    lines.append(self.wrap_with_singularity(inner, mounts_override=rewritten_mounts))
                 else:
                     lines.append(command)
         else:
@@ -141,7 +157,7 @@ class SlurmBackend(Backend):
             if self.config.singularity:
                 inner: List[str] = list(self.get_singularity_prepare_commands())
                 inner.append(command)
-                lines.append(self.wrap_with_singularity(inner))
+                lines.append(self.wrap_with_singularity(inner, mounts_override=rewritten_mounts))
             else:
                 lines.append(command)
 
