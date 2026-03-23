@@ -462,3 +462,81 @@ def _rewrite_mounts_for_worktrees(
             result.append(new_src)
 
     return result
+
+
+def _build_worktree_setup_commands(
+    submodule_worktrees: Dict[str, str],
+    resolved_commits: Dict[str, str],
+    remote_dir: str,
+) -> List[str]:
+    """Return bash lines for worktree variable assignments, trap, and git worktree add.
+
+    Emits CHESTER_WT_0, CHESTER_WT_1, ... in dict insertion order.
+    The same ordering is relied upon by _rewrite_mounts_for_worktrees()
+    and _build_worktree_cleanup_commands().
+
+    Args:
+        submodule_worktrees: {submodule_path: abs_remote_worktree_path}
+        resolved_commits: {submodule_path: full_40char_sha}
+        remote_dir: Absolute remote project root path.
+
+    Returns:
+        List of bash lines to inject into the host-side script.
+    """
+    lines = ["# --- chester: submodule worktree setup ---"]
+
+    # Variable assignments
+    for i, (sub, wt_path) in enumerate(submodule_worktrees.items()):
+        lines.append(f"CHESTER_WT_{i}={wt_path}")
+
+    # Cleanup function
+    lines.append("")
+    lines.append("_chester_wt_cleanup() {")
+    for i, (sub, _wt_path) in enumerate(submodule_worktrees.items()):
+        abs_sub = os.path.normpath(os.path.join(remote_dir, sub))
+        lines.append(
+            f'    git -C {abs_sub} worktree remove --force "$CHESTER_WT_{i}" 2>/dev/null || true'
+        )
+    lines.append("}")
+
+    # Traps: EXIT always fires; INT/TERM suppress EXIT re-fire then call cleanup
+    lines.append("trap '_chester_wt_cleanup' EXIT")
+    lines.append("trap 'trap - EXIT; _chester_wt_cleanup; exit 130' INT")
+    lines.append("trap 'trap - EXIT; _chester_wt_cleanup; exit 143' TERM")
+    lines.append("")
+
+    # Worktree creation
+    for i, (sub, wt_path) in enumerate(submodule_worktrees.items()):
+        sha = resolved_commits[sub]
+        abs_sub = os.path.normpath(os.path.join(remote_dir, sub))
+        lines.append(
+            f'git -C {abs_sub} worktree add "$CHESTER_WT_{i}" {sha}'
+        )
+
+    return lines
+
+
+def _build_worktree_cleanup_commands(
+    submodule_worktrees: Dict[str, str],
+    remote_dir: str,
+) -> List[str]:
+    """Return the cleanup body as bash lines (without the function wrapper).
+
+    Useful for inspection and testing of the cleanup logic in isolation.
+    Each line uses '|| true' so cleanup of a non-existent worktree
+    (e.g. due to partial creation failure under set -e) does not itself fail.
+
+    Args:
+        submodule_worktrees: {submodule_path: abs_remote_worktree_path}
+        remote_dir: Absolute remote project root path.
+
+    Returns:
+        List of bash lines for the cleanup body.
+    """
+    lines = []
+    for i, (sub, _wt_path) in enumerate(submodule_worktrees.items()):
+        abs_sub = os.path.normpath(os.path.join(remote_dir, sub))
+        lines.append(
+            f'git -C {abs_sub} worktree remove --force "$CHESTER_WT_{i}" 2>/dev/null || true'
+        )
+    return lines

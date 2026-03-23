@@ -1,4 +1,8 @@
-from chester.backends.base import _rewrite_mounts_for_worktrees
+from chester.backends.base import (
+    _rewrite_mounts_for_worktrees,
+    _build_worktree_setup_commands,
+    _build_worktree_cleanup_commands,
+)
 
 
 REMOTE_DIR = "/home/user/project"
@@ -83,3 +87,66 @@ def test_empty_worktrees_returns_mounts_unchanged():
     mounts = ["IsaacLabTactile/source:/workspace/IsaacLabTactile/source"]
     result = _rewrite_mounts_for_worktrees(mounts, {}, REMOTE_DIR)
     assert result == mounts
+
+
+def test_setup_commands_variable_assignments():
+    worktrees = {"IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0"}
+    commits = {"IsaacLabTactile": "abc" * 13 + "abcd"}  # 40 chars
+    cmds = _build_worktree_setup_commands(worktrees, commits, "/remote")
+    combined = "\n".join(cmds)
+    assert "CHESTER_WT_0=/remote/IsaacLabTactile/.worktrees/wt0" in combined
+
+
+def test_setup_commands_trap():
+    worktrees = {"IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0"}
+    commits = {"IsaacLabTactile": "a" * 40}
+    cmds = _build_worktree_setup_commands(worktrees, commits, "/remote")
+    combined = "\n".join(cmds)
+    assert "trap '_chester_wt_cleanup' EXIT" in combined
+    assert "trap 'trap - EXIT; _chester_wt_cleanup; exit 130' INT" in combined
+    assert "trap 'trap - EXIT; _chester_wt_cleanup; exit 143' TERM" in combined
+
+
+def test_setup_commands_git_worktree_add():
+    sha = "abc1234def5678abc1234def5678abc1234def56"
+    worktrees = {"IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0"}
+    commits = {"IsaacLabTactile": sha}
+    cmds = _build_worktree_setup_commands(worktrees, commits, "/remote")
+    combined = "\n".join(cmds)
+    assert "git -C /remote/IsaacLabTactile worktree add" in combined
+    assert sha in combined
+    # The worktree add must use the shell variable reference, not the literal path
+    assert '"$CHESTER_WT_0"' in combined
+
+
+def test_setup_commands_multiple_submodules():
+    worktrees = {
+        "IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0",
+        "third_party/rl_games": "/remote/third_party/rl_games/.worktrees/wt1",
+    }
+    commits = {
+        "IsaacLabTactile": "a" * 40,
+        "third_party/rl_games": "b" * 40,
+    }
+    cmds = _build_worktree_setup_commands(worktrees, commits, "/remote")
+    combined = "\n".join(cmds)
+    assert "CHESTER_WT_0=" in combined
+    assert "CHESTER_WT_1=" in combined
+    assert "git -C /remote/IsaacLabTactile" in combined
+    assert "git -C /remote/third_party/rl_games" in combined
+
+
+def test_cleanup_commands_or_true():
+    worktrees = {"IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0"}
+    cmds = _build_worktree_cleanup_commands(worktrees, "/remote")
+    combined = "\n".join(cmds)
+    # Must use || true so cleanup doesn't fail on non-existent worktrees
+    assert "|| true" in combined
+
+
+def test_cleanup_commands_git_worktree_remove():
+    worktrees = {"IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0"}
+    cmds = _build_worktree_cleanup_commands(worktrees, "/remote")
+    combined = "\n".join(cmds)
+    assert "git -C /remote/IsaacLabTactile worktree remove --force" in combined
+    assert '"$CHESTER_WT_0"' in combined
