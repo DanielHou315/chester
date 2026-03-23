@@ -335,7 +335,11 @@ class Backend(ABC):
             f"fi",
         ]
 
-    def wrap_with_singularity(self, commands: List[str]) -> str:
+    def wrap_with_singularity(
+        self,
+        commands: List[str],
+        mounts_override: Optional[List[str]] = None,
+    ) -> str:
         """Wrap a list of commands with singularity exec if configured."""
         sing = self.config.singularity
         if not sing:
@@ -344,7 +348,8 @@ class Backend(ABC):
         project_path = self.project_config.get("project_path", "")
 
         parts = ["singularity", "exec"]
-        for m in sing.mounts:
+        effective_mounts = mounts_override if mounts_override is not None else sing.mounts
+        for m in effective_mounts:
             # Resolve relative mount sources against project root
             if ":" in m:
                 src, dst = m.split(":", 1)

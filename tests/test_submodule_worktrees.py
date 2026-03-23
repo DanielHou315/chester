@@ -3,6 +3,7 @@ from chester.backends.base import (
     _build_worktree_setup_commands,
     _build_worktree_cleanup_commands,
 )
+from chester.backends.base import BackendConfig, SingularityConfig
 
 
 REMOTE_DIR = "/home/user/project"
@@ -150,3 +151,50 @@ def test_cleanup_commands_git_worktree_remove():
     combined = "\n".join(cmds)
     assert 'git -C "/remote/IsaacLabTactile" worktree remove --force' in combined
     assert '"$CHESTER_WT_0"' in combined
+
+
+def _make_backend_with_singularity(mounts=None):
+    """Helper: returns a minimal SlurmBackend instance with singularity configured."""
+    from chester.backends.slurm import SlurmBackend
+    from chester.backends.base import SlurmConfig
+    sing = SingularityConfig(
+        image="myimage.sif",
+        mounts=mounts or ["IsaacLabTactile/source:/workspace/IsaacLabTactile/source"],
+        gpu=False,
+        fakeroot=False,
+    )
+    cfg = BackendConfig(
+        name="gl", type="slurm", host="gl",
+        remote_dir="/remote/project", singularity=sing,
+    )
+    return SlurmBackend(cfg, {"project_path": "/local/project", "package_manager": "python"})
+
+
+def test_wrap_with_singularity_mounts_override():
+    backend = _make_backend_with_singularity(
+        mounts=["IsaacLabTactile/source:/workspace/IsaacLabTactile/source"]
+    )
+    override = ["/remote/project/IsaacLabTactile/.worktrees/wt0/source:/workspace/IsaacLabTactile/source"]
+    result = backend.wrap_with_singularity(["echo hello"], mounts_override=override)
+    # Overridden mount must appear
+    assert "/.worktrees/wt0/source:/workspace/IsaacLabTactile/source" in result
+    # The original relative source must NOT be the bind-mount source anymore
+    # (the override fully replaces the config mounts)
+    assert result.count("-B") == 1  # only one -B flag for the single overridden mount
+
+
+def test_wrap_with_singularity_no_override_uses_config_mounts():
+    backend = _make_backend_with_singularity(
+        mounts=["configs:/workspace/configs"]
+    )
+    result = backend.wrap_with_singularity(["echo hello"])
+    assert "configs" in result
+
+
+def test_wrap_with_singularity_none_override_uses_config_mounts():
+    backend = _make_backend_with_singularity(
+        mounts=["configs:/workspace/configs"]
+    )
+    result_default = backend.wrap_with_singularity(["echo hello"])
+    result_none = backend.wrap_with_singularity(["echo hello"], mounts_override=None)
+    assert result_default == result_none
