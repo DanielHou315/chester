@@ -485,9 +485,16 @@ def _build_worktree_setup_commands(
     """
     lines = ["# --- chester: submodule worktree setup ---"]
 
+    # Validate that all submodule worktrees have a corresponding commit SHA
+    missing = [sub for sub in submodule_worktrees if sub not in resolved_commits]
+    if missing:
+        raise ValueError(
+            f"[chester] _build_worktree_setup_commands: missing resolved commits for: {missing}"
+        )
+
     # Variable assignments
     for i, (sub, wt_path) in enumerate(submodule_worktrees.items()):
-        lines.append(f"CHESTER_WT_{i}={wt_path}")
+        lines.append(f'CHESTER_WT_{i}="{wt_path}"')
 
     # Cleanup function
     lines.append("")
@@ -495,7 +502,7 @@ def _build_worktree_setup_commands(
     for i, (sub, _wt_path) in enumerate(submodule_worktrees.items()):
         abs_sub = os.path.normpath(os.path.join(remote_dir, sub))
         lines.append(
-            f'    git -C {abs_sub} worktree remove --force "$CHESTER_WT_{i}" 2>/dev/null || true'
+            f'    git -C "{abs_sub}" worktree remove --force "$CHESTER_WT_{i}" 2>/dev/null || true'
         )
     lines.append("}")
 
@@ -510,7 +517,7 @@ def _build_worktree_setup_commands(
         sha = resolved_commits[sub]
         abs_sub = os.path.normpath(os.path.join(remote_dir, sub))
         lines.append(
-            f'git -C {abs_sub} worktree add "$CHESTER_WT_{i}" {sha}'
+            f'git -C "{abs_sub}" worktree add "$CHESTER_WT_{i}" {sha}'
         )
 
     return lines
@@ -537,6 +544,6 @@ def _build_worktree_cleanup_commands(
     for i, (sub, _wt_path) in enumerate(submodule_worktrees.items()):
         abs_sub = os.path.normpath(os.path.join(remote_dir, sub))
         lines.append(
-            f'git -C {abs_sub} worktree remove --force "$CHESTER_WT_{i}" 2>/dev/null || true'
+            f'git -C "{abs_sub}" worktree remove --force "$CHESTER_WT_{i}" 2>/dev/null || true'
         )
     return lines

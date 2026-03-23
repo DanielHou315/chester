@@ -94,7 +94,7 @@ def test_setup_commands_variable_assignments():
     commits = {"IsaacLabTactile": "abc" * 13 + "abcd"}  # 40 chars
     cmds = _build_worktree_setup_commands(worktrees, commits, "/remote")
     combined = "\n".join(cmds)
-    assert "CHESTER_WT_0=/remote/IsaacLabTactile/.worktrees/wt0" in combined
+    assert 'CHESTER_WT_0="/remote/IsaacLabTactile/.worktrees/wt0"' in combined
 
 
 def test_setup_commands_trap():
@@ -113,7 +113,7 @@ def test_setup_commands_git_worktree_add():
     commits = {"IsaacLabTactile": sha}
     cmds = _build_worktree_setup_commands(worktrees, commits, "/remote")
     combined = "\n".join(cmds)
-    assert "git -C /remote/IsaacLabTactile worktree add" in combined
+    assert 'git -C "/remote/IsaacLabTactile" worktree add' in combined
     assert sha in combined
     # The worktree add must use the shell variable reference, not the literal path
     assert '"$CHESTER_WT_0"' in combined
@@ -132,8 +132,8 @@ def test_setup_commands_multiple_submodules():
     combined = "\n".join(cmds)
     assert "CHESTER_WT_0=" in combined
     assert "CHESTER_WT_1=" in combined
-    assert "git -C /remote/IsaacLabTactile" in combined
-    assert "git -C /remote/third_party/rl_games" in combined
+    assert 'git -C "/remote/IsaacLabTactile"' in combined
+    assert 'git -C "/remote/third_party/rl_games"' in combined
 
 
 def test_cleanup_commands_or_true():
@@ -148,5 +148,5 @@ def test_cleanup_commands_git_worktree_remove():
     worktrees = {"IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0"}
     cmds = _build_worktree_cleanup_commands(worktrees, "/remote")
     combined = "\n".join(cmds)
-    assert "git -C /remote/IsaacLabTactile worktree remove --force" in combined
+    assert 'git -C "/remote/IsaacLabTactile" worktree remove --force' in combined
     assert '"$CHESTER_WT_0"' in combined
