@@ -203,6 +203,7 @@ backends:
         monkeypatch.setattr(job_store_mod, "get_default_job_store_dir", lambda: job_store_dir)
 
         import chester.run_exp as run_exp_mod
+        monkeypatch.setattr(run_exp_mod, "get_default_job_store_dir", lambda: job_store_dir)
 
         # Mock the backend submission so we don't actually SSH anywhere
         import chester.backends as backends_mod
@@ -381,3 +382,61 @@ def test_build_worktree_paths_unique():
     p2 = _build_worktree_paths(commits, "/remote", "03_23_10_00")
     # Random suffix makes them unique even with same timestamp
     assert p1["IsaacLabTactile"] != p2["IsaacLabTactile"]
+
+
+def test_run_experiment_lite_submodule_commits_requires_singularity(tmp_path, monkeypatch):
+    """submodule_commits with no singularity raises ValueError before submission."""
+    from chester.run_exp import run_experiment_lite
+    from chester.backends.base import BackendConfig
+
+    fake_cfg = {
+        "project_path": str(tmp_path),
+        "log_dir": str(tmp_path / "data"),
+        "package_manager": "python",
+        "backends": {
+            "local": {"type": "local"},
+        },
+    }
+    fake_backend_cfg = BackendConfig(name="local", type="local", singularity=None)
+
+    monkeypatch.setattr("chester.run_exp.load_config", lambda: fake_cfg)
+    monkeypatch.setattr("chester.run_exp.get_backend", lambda mode, cfg: fake_backend_cfg)
+
+    with pytest.raises(ValueError, match="singularity"):
+        run_experiment_lite(
+            stub_method_call=lambda v, l, e: None,
+            variant={"chester_first_variant": True, "chester_last_variant": True},
+            mode="local",
+            exp_prefix="test",
+            submodule_commits={"MySub": "abc1234"},
+        )
+
+
+def test_register_job_for_pull_stores_submodule_commits(tmp_path, monkeypatch):
+    """_register_job_for_pull writes submodule_commits and submodule_worktrees to job file."""
+    from chester.run_exp import _register_job_for_pull
+
+    captured = {}
+
+    def fake_write(job_store_dir, job):
+        captured.update(job)
+        return "job_001"
+
+    monkeypatch.setattr("chester.run_exp.write_job_file", fake_write)
+    monkeypatch.setattr(
+        "chester.run_exp.get_default_job_store_dir",
+        lambda: str(tmp_path / "jobs"),
+    )
+
+    _register_job_for_pull(
+        host="gl",
+        remote_log_dir="/remote/logs/exp1",
+        local_log_dir="/local/logs/exp1",
+        exp_name="exp1",
+        exp_prefix="myexp",
+        submodule_commits={"IsaacLabTactile": "a" * 40},
+        submodule_worktrees={"IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0"},
+    )
+
+    assert captured["submodule_commits"] == {"IsaacLabTactile": "a" * 40}
+    assert captured["submodule_worktrees"] == {"IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0"}

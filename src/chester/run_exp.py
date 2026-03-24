@@ -19,6 +19,7 @@ import secrets as _secrets
 from . import config
 from chester.config_v2 import load_config, get_backend
 from chester.backends import create_backend
+from chester.job_store import write_job_file, get_default_job_store_dir, JOB_STATUS_PENDING
 
 
 # Deprecated modes that are no longer supported
@@ -173,9 +174,10 @@ def _register_job_for_pull(
     exp_prefix: str,
     extra_pull_dirs: list = None,
     slurm_job_id: int = None,
+    submodule_commits: dict = None,
+    submodule_worktrees: dict = None,
 ):
     """Write a single job file to the persistent job store."""
-    from chester.job_store import write_job_file, get_default_job_store_dir, JOB_STATUS_PENDING
     job_store_dir = get_default_job_store_dir()
     job = {
         'host': host,
@@ -188,6 +190,10 @@ def _register_job_for_pull(
     }
     if slurm_job_id is not None:
         job['slurm_job_id'] = slurm_job_id
+    if submodule_commits:
+        job['submodule_commits'] = submodule_commits
+    if submodule_worktrees:
+        job['submodule_worktrees'] = submodule_worktrees
     job_id = write_job_file(job_store_dir, job)
     print(f'[chester] Registered job for pull: {exp_name} -> {job_store_dir}/{job_id}.json')
 
@@ -1064,6 +1070,7 @@ def run_experiment_lite(
         confirm=False,
         fresh=False,
         skip_dependency_check=False,
+        submodule_commits=None,
         **kwargs):
     """
     Serialize the stubbed method call and run the experiment using the
@@ -1149,6 +1156,28 @@ def run_experiment_lite(
         # Default: respect the enabled flag in config
         if not backend.config.singularity.enabled:
             backend.config.singularity = None
+
+    # ----------------------------------------------------------------
+    # 3.5. Validate submodule commit pinning
+    # ----------------------------------------------------------------
+    resolved_commits = {}
+    submodule_worktrees = {}
+    if submodule_commits:
+        if backend.config.singularity is None:
+            raise ValueError(
+                f"[chester] submodule_commits requires singularity to be active for "
+                f"backend '{mode}'. The current backend has no singularity config, or "
+                f"singularity was disabled via use_singularity=False."
+            )
+        resolved_commits = _validate_submodule_commits(submodule_commits, project_path)
+        remote_dir_for_wt = backend.config.remote_dir or project_path
+        submodule_worktrees = _build_worktree_paths(resolved_commits, remote_dir_for_wt, timestamp)
+        print(f"[chester] Submodule commit pinning:")
+        for sub, sha in resolved_commits.items():
+            wt = submodule_worktrees[sub]
+            wt_rel = os.path.relpath(wt, remote_dir_for_wt)
+            print(f"  {sub}: {submodule_commits[sub]} -> {sha}")
+            print(f"      worktree: {wt_rel}")
 
     # ----------------------------------------------------------------
     # 4. Variant bookkeeping
@@ -1417,6 +1446,11 @@ def run_experiment_lite(
             if backend_config.type == "slurm" and slurm_overrides:
                 gen_kwargs["slurm_overrides"] = slurm_overrides
 
+            # Pass worktree info to backend for script generation (singularity only)
+            if submodule_worktrees and backend.config.singularity:
+                gen_kwargs["submodule_worktrees"] = submodule_worktrees
+                gen_kwargs["submodule_resolved_commits"] = resolved_commits
+
             # For order="serial", pass serial step overrides to the backend
             if serial_steps:
                 gen_kwargs["serial_steps"] = serial_steps
@@ -1476,5 +1510,7 @@ def run_experiment_lite(
                     exp_prefix=exp_prefix,
                     extra_pull_dirs=resolved_extra_pull_dirs,
                     slurm_job_id=slurm_job_id,
+                    submodule_commits=resolved_commits or None,
+                    submodule_worktrees=submodule_worktrees or None,
                 )
 
