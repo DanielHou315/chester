@@ -1111,6 +1111,13 @@ def run_experiment_lite(
         confirm: If True, skip the remote execution confirmation prompt.
         fresh: If True, scan and delete existing exp_prefix dirs before launching;
                always prompts for confirmation regardless of confirm flag.
+        skip_dependency_check: If True, skip SLURM job dependency enforcement
+            (useful for local debug runs without a real SLURM scheduler).
+        submodule_commits: Optional dict of {submodule_path: git_ref} to pin
+            specific submodule commits at submission time. Requires singularity
+            to be active on the backend. Each ref is resolved locally via
+            git rev-parse to a full 40-char SHA. Worktrees are created on the
+            remote host and removed after the job exits.
         **kwargs: Additional parameters passed to the python script.
     """
     # Fix mutable defaults
