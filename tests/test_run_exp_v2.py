@@ -317,3 +317,67 @@ class TestVariantGeneratorDerive:
         assert len(variants) == 2
         assert variants[0]["doubled"] == 2
         assert variants[1]["doubled"] == 4
+
+
+import subprocess
+
+
+def test_validate_submodule_commits_resolves_sha(tmp_path):
+    from chester.run_exp import _validate_submodule_commits
+
+    # Create a fake git repo in tmp_path/MySub
+    sub_path = tmp_path / "MySub"
+    sub_path.mkdir()
+    subprocess.run(["git", "init"], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=sub_path, check=True, capture_output=True)
+    (sub_path / "f.txt").write_text("hello")
+    subprocess.run(["git", "add", "."], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=sub_path, check=True, capture_output=True)
+    sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=sub_path, text=True
+    ).strip()
+
+    result = _validate_submodule_commits({"MySub": sha[:8]}, str(tmp_path))
+    assert result["MySub"] == sha  # resolved to full 40-char SHA
+
+
+def test_validate_submodule_commits_raises_on_bad_ref(tmp_path):
+    from chester.run_exp import _validate_submodule_commits
+
+    sub_path = tmp_path / "MySub"
+    sub_path.mkdir()
+    subprocess.run(["git", "init"], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=sub_path, check=True, capture_output=True)
+    (sub_path / "f.txt").write_text("hello")
+    subprocess.run(["git", "add", "."], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=sub_path, check=True, capture_output=True)
+
+    with pytest.raises(ValueError, match="MySub"):
+        _validate_submodule_commits({"MySub": "deadbeef0000"}, str(tmp_path))
+
+
+def test_validate_submodule_commits_raises_on_missing_path(tmp_path):
+    from chester.run_exp import _validate_submodule_commits
+    with pytest.raises(ValueError, match="not found"):
+        _validate_submodule_commits({"nonexistent": "abc"}, str(tmp_path))
+
+
+def test_build_worktree_paths_format():
+    from chester.run_exp import _build_worktree_paths
+    commits = {"IsaacLabTactile": "abc1234def5678" + "a" * 26}
+    paths = _build_worktree_paths(commits, "/remote/project", "03_23_10_00")
+    wt = paths["IsaacLabTactile"]
+    assert wt.startswith("/remote/project/IsaacLabTactile/.worktrees/")
+    assert "03_23_10_00" in wt
+    assert "abc1234def5" in wt  # short SHA present (first 12 chars)
+
+
+def test_build_worktree_paths_unique():
+    from chester.run_exp import _build_worktree_paths
+    commits = {"IsaacLabTactile": "a" * 40}
+    p1 = _build_worktree_paths(commits, "/remote", "03_23_10_00")
+    p2 = _build_worktree_paths(commits, "/remote", "03_23_10_00")
+    # Random suffix makes them unique even with same timestamp
+    assert p1["IsaacLabTactile"] != p2["IsaacLabTactile"]

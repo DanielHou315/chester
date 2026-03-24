@@ -15,6 +15,7 @@ import datetime
 import dateutil.tz
 import json
 import shlex
+import secrets as _secrets
 from . import config
 from chester.config_v2 import load_config, get_backend
 from chester.backends import create_backend
@@ -189,6 +190,79 @@ def _register_job_for_pull(
         job['slurm_job_id'] = slurm_job_id
     job_id = write_job_file(job_store_dir, job)
     print(f'[chester] Registered job for pull: {exp_name} -> {job_store_dir}/{job_id}.json')
+
+
+def _validate_submodule_commits(
+    submodule_commits: dict,
+    project_path: str,
+) -> dict:
+    """Validate submodule refs locally and resolve to full 40-char SHAs.
+
+    Args:
+        submodule_commits: {submodule_path: ref} — user-provided refs (may be
+            short SHA, branch name, or tag).
+        project_path: Absolute local path of the project root.
+
+    Returns:
+        {submodule_path: full_sha} with resolved 40-char SHAs.
+
+    Raises:
+        ValueError: If a submodule path does not exist or a ref cannot be
+            resolved.
+    """
+    resolved = {}
+    for sub_path, ref in submodule_commits.items():
+        abs_sub = os.path.join(project_path, sub_path)
+        if not os.path.isdir(abs_sub):
+            raise ValueError(
+                f"[chester] submodule_commits: path not found: '{abs_sub}'\n"
+                f"  Key '{sub_path}' must be a directory under project_path."
+            )
+        try:
+            full_sha = subprocess.check_output(
+                ["git", "-C", abs_sub, "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except subprocess.CalledProcessError:
+            raise ValueError(
+                f"[chester] submodule_commits: cannot resolve ref '{ref}' "
+                f"in submodule '{sub_path}'.\n"
+                f"  Run: git -C {abs_sub} rev-parse {ref}"
+            )
+        resolved[sub_path] = full_sha
+    return resolved
+
+
+def _build_worktree_paths(
+    resolved_commits: dict,
+    remote_dir: str,
+    timestamp: str,
+) -> dict:
+    """Compute unique remote worktree paths for each pinned submodule.
+
+    Names follow the pattern:
+        {submodule_path}/.worktrees/{timestamp}_{random6hex}_{short_sha}/
+
+    The timestamp reflects submission time (not execution time). The random
+    6-hex suffix ensures uniqueness across concurrent same-minute launches.
+
+    Args:
+        resolved_commits: {submodule_path: full_40char_sha}
+        remote_dir: Absolute remote project root path.
+        timestamp: Submission timestamp string (e.g. "03_23_10_00").
+
+    Returns:
+        {submodule_path: abs_remote_worktree_path}
+    """
+    result = {}
+    for sub_path, full_sha in resolved_commits.items():
+        rand = _secrets.token_hex(3)       # 6 hex chars
+        short_sha = full_sha[:12]
+        wt_name = f"{timestamp}_{rand}_{short_sha}"
+        wt_path = os.path.join(remote_dir, sub_path, ".worktrees", wt_name)
+        result[sub_path] = wt_path
+    return result
 
 
 def monitor_processes(active_processes, max_processes=2, sleep_time=1):
