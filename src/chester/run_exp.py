@@ -1306,7 +1306,7 @@ def run_experiment_lite(
                     else:
                         popen_obj = subprocess.Popen(command, shell=True, env=run_env,
                                                      executable="/bin/bash")
-                    sub_process_popens.append(popen_obj)
+                        sub_process_popens.append(popen_obj)
                 except Exception as e:
                     print(e)
                     if isinstance(e, KeyboardInterrupt):
