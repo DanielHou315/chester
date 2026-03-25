@@ -1,3 +1,5 @@
+import pytest
+
 from chester.backends.base import (
     _rewrite_mounts_for_worktrees,
     _build_worktree_setup_commands,
@@ -198,3 +200,13 @@ def test_wrap_with_singularity_none_override_uses_config_mounts():
     result_default = backend.wrap_with_singularity(["echo hello"])
     result_none = backend.wrap_with_singularity(["echo hello"], mounts_override=None)
     assert result_default == result_none
+
+
+def test_setup_commands_raises_on_missing_commit():
+    worktrees = {
+        "IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0",
+        "third_party/rl_games": "/remote/third_party/rl_games/.worktrees/wt1",
+    }
+    commits = {"IsaacLabTactile": "a" * 40}  # missing third_party/rl_games
+    with pytest.raises(ValueError, match="third_party/rl_games"):
+        _build_worktree_setup_commands(worktrees, commits, "/remote")

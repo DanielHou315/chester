@@ -522,7 +522,7 @@ def _build_worktree_setup_commands(
         sha = resolved_commits[sub]
         abs_sub = os.path.normpath(os.path.join(remote_dir, sub))
         lines.append(
-            f'git -C "{abs_sub}" worktree add "$CHESTER_WT_{i}" {sha}'
+            f'git -C "{abs_sub}" worktree add "$CHESTER_WT_{i}" "{sha}"'
         )
 
     return lines
