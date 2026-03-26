@@ -172,3 +172,58 @@ def test_ssh_script_contains_command_with_params():
     assert "--lr" in script
     assert "--batch_size" in script
     assert "train.py" in script
+
+
+def _make_ssh_backend_with_singularity(remote_dir="/home/user/project"):
+    from chester.backends.ssh import SSHBackend
+    from chester.backends.base import BackendConfig, SingularityConfig
+    sing = SingularityConfig(
+        image="myimage.sif",
+        mounts=[
+            "IsaacLabTactile/source:/workspace/IsaacLabTactile/source",
+            "configs:/workspace/configs",
+        ],
+        gpu=True,
+        fakeroot=False,
+    )
+    cfg = BackendConfig(
+        name="armdual", type="ssh", host="armdual",
+        remote_dir=remote_dir, singularity=sing,
+    )
+    return SSHBackend(cfg, {"project_path": "/local/project", "package_manager": "python"})
+
+
+def test_ssh_generate_script_with_worktrees_injects_setup():
+    backend = _make_ssh_backend_with_singularity()
+    task = {"params": {"log_dir": "/remote/logs/exp1"}}
+    worktrees = {"IsaacLabTactile": "/home/user/project/IsaacLabTactile/.worktrees/wt0"}
+    commits = {"IsaacLabTactile": "a" * 40}
+    script = backend.generate_script(
+        task, script="train.py",
+        submodule_worktrees=worktrees,
+        submodule_resolved_commits=commits,
+    )
+    assert "CHESTER_WT_0=" in script
+    assert "_chester_wt_cleanup" in script
+    assert "trap '_chester_wt_cleanup' EXIT" in script
+
+
+def test_ssh_generate_script_with_worktrees_rewrites_mounts():
+    backend = _make_ssh_backend_with_singularity()
+    task = {"params": {"log_dir": "/remote/logs/exp1"}}
+    worktrees = {"IsaacLabTactile": "/home/user/project/IsaacLabTactile/.worktrees/wt0"}
+    commits = {"IsaacLabTactile": "a" * 40}
+    script = backend.generate_script(
+        task, script="train.py",
+        submodule_worktrees=worktrees,
+        submodule_resolved_commits=commits,
+    )
+    assert "/.worktrees/wt0/source" in script
+    assert "configs:/workspace/configs" in script
+
+
+def test_ssh_generate_script_without_worktrees_unchanged():
+    backend = _make_ssh_backend_with_singularity()
+    task = {"params": {"log_dir": "/remote/logs/exp1"}}
+    script = backend.generate_script(task, script="train.py")
+    assert "CHESTER_WT" not in script

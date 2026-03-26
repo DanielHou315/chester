@@ -335,7 +335,11 @@ class Backend(ABC):
             f"fi",
         ]
 
-    def wrap_with_singularity(self, commands: List[str]) -> str:
+    def wrap_with_singularity(
+        self,
+        commands: List[str],
+        mounts_override: Optional[List[str]] = None,
+    ) -> str:
         """Wrap a list of commands with singularity exec if configured."""
         sing = self.config.singularity
         if not sing:
@@ -344,7 +348,8 @@ class Backend(ABC):
         project_path = self.project_config.get("project_path", "")
 
         parts = ["singularity", "exec"]
-        for m in sing.mounts:
+        effective_mounts = mounts_override if mounts_override is not None else sing.mounts
+        for m in effective_mounts:
             # Resolve relative mount sources against project root
             if ":" in m:
                 src, dst = m.split(":", 1)
@@ -383,3 +388,167 @@ class Backend(ABC):
         inner = " && ".join(executable)
         parts.extend(["/bin/bash", "-c", shlex.quote(inner)])
         return " ".join(parts)
+
+
+def _rewrite_mounts_for_worktrees(
+    mounts: List[str],
+    submodule_worktrees: Dict[str, str],
+    remote_dir: str,
+) -> List[str]:
+    """Rewrite mount sources that fall under a pinned submodule worktree.
+
+    For each mount whose host-side source resolves to a path under a pinned
+    submodule, replaces the submodule root prefix with the worktree path.
+
+    The ``/`` suffix guard in the prefix check prevents false matches
+    (e.g. submodule ``IsaacLabTactile`` does NOT match ``IsaacLabTactile_v2``).
+
+    Mounts whose source starts with ``~`` or ``$`` are left untouched
+    (shell-expanded at runtime, cannot be statically resolved).
+
+    NOTE: Returns absolute worktree paths (not $CHESTER_WT_N bash variable
+    references). The spec describes bash variable refs in mounts, but using
+    absolute paths is functionally equivalent and simpler — the path is fully
+    known at generation time. The CHESTER_WT_N variables are still emitted
+    for git worktree add and cleanup; they just aren't needed in the -B flags.
+
+    Args:
+        mounts: List of mount strings in ``src:dst`` or bare ``src`` format.
+        submodule_worktrees: Mapping of submodule path (relative to project
+            root) to absolute remote worktree path.
+        remote_dir: Absolute path of the remote project root.
+
+    Returns:
+        New list of mount strings with sources rewritten where applicable.
+        The input list is not mutated.
+    """
+    result = []
+    # Pre-compute absolute submodule paths once
+    abs_submodules = {
+        sub: os.path.normpath(os.path.join(remote_dir, sub))
+        for sub in submodule_worktrees
+    }
+
+    for mount in mounts:
+        if ":" in mount:
+            src, dst = mount.split(":", 1)
+        else:
+            src, dst = mount, None
+
+        # Leave shell-expanded paths untouched
+        if src.startswith(("~", "$")):
+            result.append(mount)
+            continue
+
+        # Resolve relative src to absolute remote path
+        if not os.path.isabs(src):
+            abs_src = os.path.normpath(os.path.join(remote_dir, src))
+        else:
+            abs_src = os.path.normpath(src)
+
+        new_src = None
+        for sub_path, wt_path in submodule_worktrees.items():
+            abs_sub = abs_submodules[sub_path]
+            if abs_src == abs_sub:
+                new_src = wt_path
+                break
+            # Explicit /sep guard prevents IsaacLabTactile_v2 matching IsaacLabTactile
+            if abs_src.startswith(abs_sub + os.sep):
+                suffix = abs_src[len(abs_sub):]  # includes leading sep
+                new_src = wt_path + suffix
+                break
+
+        if new_src is None:
+            # No submodule matched — return the original mount string unchanged
+            result.append(mount)
+        elif dst is not None:
+            result.append(f"{new_src}:{dst}")
+        else:
+            result.append(new_src)
+
+    return result
+
+
+def _build_worktree_setup_commands(
+    submodule_worktrees: Dict[str, str],
+    resolved_commits: Dict[str, str],
+    remote_dir: str,
+) -> List[str]:
+    """Return bash lines for worktree variable assignments, trap, and git worktree add.
+
+    Emits CHESTER_WT_0, CHESTER_WT_1, ... in dict insertion order.
+    The same ordering is relied upon by _rewrite_mounts_for_worktrees()
+    and _build_worktree_cleanup_commands().
+
+    Args:
+        submodule_worktrees: {submodule_path: abs_remote_worktree_path}
+        resolved_commits: {submodule_path: full_40char_sha}
+        remote_dir: Absolute remote project root path.
+
+    Returns:
+        List of bash lines to inject into the host-side script.
+    """
+    lines = ["# --- chester: submodule worktree setup ---"]
+
+    # Validate that all submodule worktrees have a corresponding commit SHA
+    missing = [sub for sub in submodule_worktrees if sub not in resolved_commits]
+    if missing:
+        raise ValueError(
+            f"[chester] _build_worktree_setup_commands: missing resolved commits for: {missing}"
+        )
+
+    # Variable assignments
+    for i, (sub, wt_path) in enumerate(submodule_worktrees.items()):
+        lines.append(f'CHESTER_WT_{i}="{wt_path}"')
+
+    # Cleanup function
+    lines.append("")
+    lines.append("_chester_wt_cleanup() {")
+    for i, (sub, _wt_path) in enumerate(submodule_worktrees.items()):
+        abs_sub = os.path.normpath(os.path.join(remote_dir, sub))
+        lines.append(
+            f'    git -C "{abs_sub}" worktree remove --force "$CHESTER_WT_{i}" 2>/dev/null || true'
+        )
+    lines.append("}")
+
+    # Traps: EXIT always fires; INT/TERM suppress EXIT re-fire then call cleanup
+    lines.append("trap '_chester_wt_cleanup' EXIT")
+    lines.append("trap 'trap - EXIT; _chester_wt_cleanup; exit 130' INT")
+    lines.append("trap 'trap - EXIT; _chester_wt_cleanup; exit 143' TERM")
+    lines.append("")
+
+    # Worktree creation
+    for i, (sub, wt_path) in enumerate(submodule_worktrees.items()):
+        sha = resolved_commits[sub]
+        abs_sub = os.path.normpath(os.path.join(remote_dir, sub))
+        lines.append(
+            f'git -C "{abs_sub}" worktree add "$CHESTER_WT_{i}" "{sha}"'
+        )
+
+    return lines
+
+
+def _build_worktree_cleanup_commands(
+    submodule_worktrees: Dict[str, str],
+    remote_dir: str,
+) -> List[str]:
+    """Return the cleanup body as bash lines (without the function wrapper).
+
+    Useful for inspection and testing of the cleanup logic in isolation.
+    Each line uses '|| true' so cleanup of a non-existent worktree
+    (e.g. due to partial creation failure under set -e) does not itself fail.
+
+    Args:
+        submodule_worktrees: {submodule_path: abs_remote_worktree_path}
+        remote_dir: Absolute remote project root path.
+
+    Returns:
+        List of bash lines for the cleanup body.
+    """
+    lines = []
+    for i, (sub, _wt_path) in enumerate(submodule_worktrees.items()):
+        abs_sub = os.path.normpath(os.path.join(remote_dir, sub))
+        lines.append(
+            f'git -C "{abs_sub}" worktree remove --force "$CHESTER_WT_{i}" 2>/dev/null || true'
+        )
+    return lines

@@ -7,7 +7,12 @@ import subprocess
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import Backend, BackendConfig
+from .base import (
+    Backend,
+    BackendConfig,
+    _build_worktree_setup_commands,
+    _rewrite_mounts_for_worktrees,
+)
 
 
 class SSHBackend(Backend):
@@ -34,6 +39,8 @@ class SSHBackend(Backend):
         hydra_enabled: bool = False,
         hydra_flags: Optional[Dict[str, Any]] = None,
         serial_steps: Optional[List[Tuple[str, list]]] = None,
+        submodule_worktrees: Optional[Dict[str, str]] = None,
+        submodule_resolved_commits: Optional[Dict[str, str]] = None,
     ) -> str:
         """Generate a full bash script for SSH-based remote execution.
 
@@ -62,6 +69,11 @@ class SSHBackend(Backend):
             hydra_flags: Hydra flags (e.g. ``{'multirun': True}``).
             serial_steps: List of (key, [val1, val2, ...]) for order='serial'.
                   Generates one command per step value in the same script.
+            submodule_worktrees: Optional mapping of submodule path to absolute
+                remote worktree path. When set, mounts for these submodules are
+                redirected to the worktree. Requires ``submodule_resolved_commits``.
+            submodule_resolved_commits: Optional mapping of submodule path to full
+                40-char SHA. Required when ``submodule_worktrees`` is set.
 
         Returns:
             Full bash script as a string.
@@ -84,6 +96,19 @@ class SSHBackend(Backend):
         prepare_cmds = self.get_prepare_commands()
         lines.extend(prepare_cmds)
 
+        # ---- Submodule worktree setup (before overlay and singularity) ----
+        if submodule_worktrees:
+            lines.extend(_build_worktree_setup_commands(
+                submodule_worktrees, submodule_resolved_commits, remote_dir
+            ))
+            rewritten_mounts = _rewrite_mounts_for_worktrees(
+                self.config.singularity.mounts if self.config.singularity else [],
+                submodule_worktrees,
+                remote_dir,
+            )
+        else:
+            rewritten_mounts = None
+
         # Create overlay image if needed (before singularity exec).
         lines.extend(self.get_overlay_setup_commands())
 
@@ -99,7 +124,7 @@ class SSHBackend(Backend):
                 if self.config.singularity:
                     inner: List[str] = list(self.get_singularity_prepare_commands())
                     inner.append(command)
-                    lines.append(self.wrap_with_singularity(inner))
+                    lines.append(self.wrap_with_singularity(inner, mounts_override=rewritten_mounts))
                 else:
                     lines.append(command)
         else:
@@ -110,7 +135,7 @@ class SSHBackend(Backend):
             if self.config.singularity:
                 inner: List[str] = list(self.get_singularity_prepare_commands())
                 inner.append(command)
-                lines.append(self.wrap_with_singularity(inner))
+                lines.append(self.wrap_with_singularity(inner, mounts_override=rewritten_mounts))
             else:
                 lines.append(command)
 

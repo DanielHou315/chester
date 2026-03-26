@@ -15,9 +15,11 @@ import datetime
 import dateutil.tz
 import json
 import shlex
+import secrets as _secrets
 from . import config
 from chester.config_v2 import load_config, get_backend
 from chester.backends import create_backend
+from chester.job_store import write_job_file, get_default_job_store_dir, JOB_STATUS_PENDING
 
 
 # Deprecated modes that are no longer supported
@@ -172,9 +174,10 @@ def _register_job_for_pull(
     exp_prefix: str,
     extra_pull_dirs: list = None,
     slurm_job_id: int = None,
+    submodule_commits: dict = None,
+    submodule_worktrees: dict = None,
 ):
     """Write a single job file to the persistent job store."""
-    from chester.job_store import write_job_file, get_default_job_store_dir, JOB_STATUS_PENDING
     job_store_dir = get_default_job_store_dir()
     job = {
         'host': host,
@@ -187,8 +190,85 @@ def _register_job_for_pull(
     }
     if slurm_job_id is not None:
         job['slurm_job_id'] = slurm_job_id
+    if submodule_commits:
+        job['submodule_commits'] = submodule_commits
+    if submodule_worktrees:
+        job['submodule_worktrees'] = submodule_worktrees
     job_id = write_job_file(job_store_dir, job)
     print(f'[chester] Registered job for pull: {exp_name} -> {job_store_dir}/{job_id}.json')
+
+
+def _validate_submodule_commits(
+    submodule_commits: dict,
+    project_path: str,
+) -> dict:
+    """Validate submodule refs locally and resolve to full 40-char SHAs.
+
+    Args:
+        submodule_commits: {submodule_path: ref} — user-provided refs (may be
+            short SHA, branch name, or tag).
+        project_path: Absolute local path of the project root.
+
+    Returns:
+        {submodule_path: full_sha} with resolved 40-char SHAs.
+
+    Raises:
+        ValueError: If a submodule path does not exist or a ref cannot be
+            resolved.
+    """
+    resolved = {}
+    for sub_path, ref in submodule_commits.items():
+        abs_sub = os.path.join(project_path, sub_path)
+        if not os.path.isdir(abs_sub):
+            raise ValueError(
+                f"[chester] submodule_commits: path not found: '{abs_sub}'\n"
+                f"  Key '{sub_path}' must be a directory under project_path."
+            )
+        try:
+            full_sha = subprocess.check_output(
+                ["git", "-C", abs_sub, "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except subprocess.CalledProcessError:
+            raise ValueError(
+                f"[chester] submodule_commits: cannot resolve ref '{ref}' "
+                f"in submodule '{sub_path}'.\n"
+                f"  Run: git -C {abs_sub} rev-parse {ref}"
+            )
+        resolved[sub_path] = full_sha
+    return resolved
+
+
+def _build_worktree_paths(
+    resolved_commits: dict,
+    remote_dir: str,
+    timestamp: str,
+) -> dict:
+    """Compute unique remote worktree paths for each pinned submodule.
+
+    Names follow the pattern:
+        {submodule_path}/.worktrees/{timestamp}_{random6hex}_{short_sha}/
+
+    The timestamp reflects submission time (not execution time). The random
+    6-hex suffix ensures uniqueness across concurrent same-minute launches.
+
+    Args:
+        resolved_commits: {submodule_path: full_40char_sha}
+        remote_dir: Absolute remote project root path.
+        timestamp: Submission timestamp string (e.g. "03_23_10_00").
+
+    Returns:
+        {submodule_path: abs_remote_worktree_path}
+    """
+    result = {}
+    for sub_path, full_sha in resolved_commits.items():
+        rand = _secrets.token_hex(3)       # 6 hex chars
+        short_sha = full_sha[:12]
+        wt_name = f"{timestamp}_{rand}_{short_sha}"
+        wt_path = os.path.join(remote_dir, sub_path, ".worktrees", wt_name)
+        result[sub_path] = wt_path
+    return result
 
 
 def monitor_processes(active_processes, max_processes=2, sleep_time=1):
@@ -990,6 +1070,7 @@ def run_experiment_lite(
         confirm=False,
         fresh=False,
         skip_dependency_check=False,
+        submodule_commits=None,
         **kwargs):
     """
     Serialize the stubbed method call and run the experiment using the
@@ -1030,6 +1111,13 @@ def run_experiment_lite(
         confirm: If True, skip the remote execution confirmation prompt.
         fresh: If True, scan and delete existing exp_prefix dirs before launching;
                always prompts for confirmation regardless of confirm flag.
+        skip_dependency_check: If True, skip SLURM job dependency enforcement
+            (useful for local debug runs without a real SLURM scheduler).
+        submodule_commits: Optional dict of {submodule_path: git_ref} to pin
+            specific submodule commits at submission time. Requires singularity
+            to be active on the backend. Each ref is resolved locally via
+            git rev-parse to a full 40-char SHA. Worktrees are created on the
+            remote host and removed after the job exits.
         **kwargs: Additional parameters passed to the python script.
     """
     # Fix mutable defaults
@@ -1075,6 +1163,28 @@ def run_experiment_lite(
         # Default: respect the enabled flag in config
         if not backend.config.singularity.enabled:
             backend.config.singularity = None
+
+    # ----------------------------------------------------------------
+    # 3.5. Validate submodule commit pinning
+    # ----------------------------------------------------------------
+    resolved_commits = {}
+    submodule_worktrees = {}
+    if submodule_commits:
+        if backend.config.singularity is None:
+            raise ValueError(
+                f"[chester] submodule_commits requires singularity to be active for "
+                f"backend '{mode}'. The current backend has no singularity config, or "
+                f"singularity was disabled via use_singularity=False."
+            )
+        resolved_commits = _validate_submodule_commits(submodule_commits, project_path)
+        remote_dir_for_wt = backend.config.remote_dir or project_path
+        submodule_worktrees = _build_worktree_paths(resolved_commits, remote_dir_for_wt, timestamp)
+        print(f"[chester] Submodule commit pinning:")
+        for sub, sha in resolved_commits.items():
+            wt = submodule_worktrees[sub]
+            wt_rel = os.path.relpath(wt, remote_dir_for_wt)
+            print(f"  {sub}: {submodule_commits[sub]} -> {sha}")
+            print(f"      worktree: {wt_rel}")
 
     # ----------------------------------------------------------------
     # 4. Variant bookkeeping
@@ -1343,6 +1453,11 @@ def run_experiment_lite(
             if backend_config.type == "slurm" and slurm_overrides:
                 gen_kwargs["slurm_overrides"] = slurm_overrides
 
+            # Pass worktree info to backend for script generation (singularity only)
+            if submodule_worktrees and backend.config.singularity:
+                gen_kwargs["submodule_worktrees"] = submodule_worktrees
+                gen_kwargs["submodule_resolved_commits"] = resolved_commits
+
             # For order="serial", pass serial step overrides to the backend
             if serial_steps:
                 gen_kwargs["serial_steps"] = serial_steps
@@ -1402,5 +1517,7 @@ def run_experiment_lite(
                     exp_prefix=exp_prefix,
                     extra_pull_dirs=resolved_extra_pull_dirs,
                     slurm_job_id=slurm_job_id,
+                    submodule_commits=resolved_commits or None,
+                    submodule_worktrees=submodule_worktrees or None,
                 )
 

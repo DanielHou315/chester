@@ -203,6 +203,7 @@ backends:
         monkeypatch.setattr(job_store_mod, "get_default_job_store_dir", lambda: job_store_dir)
 
         import chester.run_exp as run_exp_mod
+        monkeypatch.setattr(run_exp_mod, "get_default_job_store_dir", lambda: job_store_dir)
 
         # Mock the backend submission so we don't actually SSH anywhere
         import chester.backends as backends_mod
@@ -317,3 +318,125 @@ class TestVariantGeneratorDerive:
         assert len(variants) == 2
         assert variants[0]["doubled"] == 2
         assert variants[1]["doubled"] == 4
+
+
+import subprocess
+
+
+def test_validate_submodule_commits_resolves_sha(tmp_path):
+    from chester.run_exp import _validate_submodule_commits
+
+    # Create a fake git repo in tmp_path/MySub
+    sub_path = tmp_path / "MySub"
+    sub_path.mkdir()
+    subprocess.run(["git", "init"], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=sub_path, check=True, capture_output=True)
+    (sub_path / "f.txt").write_text("hello")
+    subprocess.run(["git", "add", "."], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=sub_path, check=True, capture_output=True)
+    sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=sub_path, text=True
+    ).strip()
+
+    result = _validate_submodule_commits({"MySub": sha[:8]}, str(tmp_path))
+    assert result["MySub"] == sha  # resolved to full 40-char SHA
+
+
+def test_validate_submodule_commits_raises_on_bad_ref(tmp_path):
+    from chester.run_exp import _validate_submodule_commits
+
+    sub_path = tmp_path / "MySub"
+    sub_path.mkdir()
+    subprocess.run(["git", "init"], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=sub_path, check=True, capture_output=True)
+    (sub_path / "f.txt").write_text("hello")
+    subprocess.run(["git", "add", "."], cwd=sub_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=sub_path, check=True, capture_output=True)
+
+    with pytest.raises(ValueError, match="MySub"):
+        _validate_submodule_commits({"MySub": "deadbeef0000"}, str(tmp_path))
+
+
+def test_validate_submodule_commits_raises_on_missing_path(tmp_path):
+    from chester.run_exp import _validate_submodule_commits
+    with pytest.raises(ValueError, match="not found"):
+        _validate_submodule_commits({"nonexistent": "abc"}, str(tmp_path))
+
+
+def test_build_worktree_paths_format():
+    from chester.run_exp import _build_worktree_paths
+    commits = {"IsaacLabTactile": "abc1234def5678" + "a" * 26}
+    paths = _build_worktree_paths(commits, "/remote/project", "03_23_10_00")
+    wt = paths["IsaacLabTactile"]
+    assert wt.startswith("/remote/project/IsaacLabTactile/.worktrees/")
+    assert "03_23_10_00" in wt
+    assert "abc1234def5" in wt  # short SHA present (first 12 chars)
+
+
+def test_build_worktree_paths_unique():
+    from chester.run_exp import _build_worktree_paths
+    commits = {"IsaacLabTactile": "a" * 40}
+    p1 = _build_worktree_paths(commits, "/remote", "03_23_10_00")
+    p2 = _build_worktree_paths(commits, "/remote", "03_23_10_00")
+    # Random suffix makes them unique even with same timestamp
+    assert p1["IsaacLabTactile"] != p2["IsaacLabTactile"]
+
+
+def test_run_experiment_lite_submodule_commits_requires_singularity(tmp_path, monkeypatch):
+    """submodule_commits with no singularity raises ValueError before submission."""
+    from chester.run_exp import run_experiment_lite
+    from chester.backends.base import BackendConfig
+
+    fake_cfg = {
+        "project_path": str(tmp_path),
+        "log_dir": str(tmp_path / "data"),
+        "package_manager": "python",
+        "backends": {
+            "local": {"type": "local"},
+        },
+    }
+    fake_backend_cfg = BackendConfig(name="local", type="local", singularity=None)
+
+    monkeypatch.setattr("chester.run_exp.load_config", lambda: fake_cfg)
+    monkeypatch.setattr("chester.run_exp.get_backend", lambda mode, cfg: fake_backend_cfg)
+
+    with pytest.raises(ValueError, match="singularity"):
+        run_experiment_lite(
+            stub_method_call=lambda v, l, e: None,
+            variant={"chester_first_variant": True, "chester_last_variant": True},
+            mode="local",
+            exp_prefix="test",
+            submodule_commits={"MySub": "abc1234"},
+        )
+
+
+def test_register_job_for_pull_stores_submodule_commits(tmp_path, monkeypatch):
+    """_register_job_for_pull writes submodule_commits and submodule_worktrees to job file."""
+    from chester.run_exp import _register_job_for_pull
+
+    captured = {}
+
+    def fake_write(job_store_dir, job):
+        captured.update(job)
+        return "job_001"
+
+    monkeypatch.setattr("chester.run_exp.write_job_file", fake_write)
+    monkeypatch.setattr(
+        "chester.run_exp.get_default_job_store_dir",
+        lambda: str(tmp_path / "jobs"),
+    )
+
+    _register_job_for_pull(
+        host="gl",
+        remote_log_dir="/remote/logs/exp1",
+        local_log_dir="/local/logs/exp1",
+        exp_name="exp1",
+        exp_prefix="myexp",
+        submodule_commits={"IsaacLabTactile": "a" * 40},
+        submodule_worktrees={"IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0"},
+    )
+
+    assert captured["submodule_commits"] == {"IsaacLabTactile": "a" * 40}
+    assert captured["submodule_worktrees"] == {"IsaacLabTactile": "/remote/IsaacLabTactile/.worktrees/wt0"}
