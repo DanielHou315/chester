@@ -1408,6 +1408,14 @@ def run_experiment_lite(
         if task_env:
             merged_env.update(task_env)
 
+        # Auto-assign CUDA_VISIBLE_DEVICES for local backends if not already set.
+        # Uses round-robin over detected GPUs so concurrent jobs spread across devices.
+        if (backend_config.type == "local"
+                and "CUDA_VISIBLE_DEVICES" not in os.environ
+                and "CUDA_VISIBLE_DEVICES" not in merged_env):
+            gpu_ids = detect_local_gpus()
+            merged_env["CUDA_VISIBLE_DEVICES"] = gpu_ids[exp_count % len(gpu_ids)]
+
         # Build task dict for backend (params sub-dict)
         backend_task = {
             "params": {k: v for k, v in task.items()},
