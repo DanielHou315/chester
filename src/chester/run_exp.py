@@ -1019,9 +1019,46 @@ exp_count = -2
 sub_process_popens = []
 # Module-level registry: (exp_prefix, seq_identity) -> slurm_job_id
 _slurm_job_registry: dict = {}
+# Cached SSH backends for batch mode (keyed by mode name)
+_ssh_batch_backends: dict = {}
 now = datetime.datetime.now(dateutil.tz.tzlocal())
 timestamp = now.strftime('%m_%d_%H_%M')
 remote_confirmed = False
+
+
+def detect_local_gpus() -> list:
+    """Return available local GPU IDs as strings.
+
+    Resolution order:
+    1. ``$CUDA_VISIBLE_DEVICES`` env var
+    2. ``nvidia-smi --query-gpu=index``
+    3. Fallback: ``["0"]``
+    """
+    env_val = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if env_val and env_val not in ("NoDevFiles",):
+        return [g.strip() for g in env_val.split(",") if g.strip()]
+    result = subprocess.run(
+        ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        ids = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+        if ids:
+            return ids
+    return ["0"]
+
+
+def flush_backend(mode: str) -> None:
+    """Flush accumulated scripts for a batch SSH backend and fire the meta-job.
+
+    No-op if the backend is not in batch mode or has no pending scripts.
+    Should be called after the variant loop in the launcher.
+    """
+    backend = _ssh_batch_backends.get(mode)
+    if backend is None:
+        return
+    backend.flush_batch()
+    del _ssh_batch_backends[mode]
 
 
 def _iter_serial_overrides(serial_steps):
@@ -1141,7 +1178,15 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     cfg = load_config()
     backend_config = get_backend(mode, cfg)
-    backend = create_backend(backend_config, cfg)
+
+    if backend_config.type == "ssh" and backend_config.batch_gpu:
+        # Batch SSH mode: reuse the same backend instance across all variants
+        # so submit() can accumulate scripts until flush_backend() is called.
+        if mode not in _ssh_batch_backends:
+            _ssh_batch_backends[mode] = create_backend(backend_config, cfg)
+        backend = _ssh_batch_backends[mode]
+    else:
+        backend = create_backend(backend_config, cfg)
 
     project_path = cfg["project_path"]
     cfg_log_dir = cfg["log_dir"]

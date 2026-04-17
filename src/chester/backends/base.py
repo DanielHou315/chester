@@ -117,6 +117,8 @@ class BackendConfig:
     cuda_module: Optional[str] = None
     slurm: Optional[SlurmConfig] = None
     singularity: Optional[SingularityConfig] = None
+    batch_gpu: Optional[int] = None       # SSH batch mode: max K GPU workers (cap on auto-detected count)
+    cuda_visible_devices: Optional[str] = None  # Explicit device list e.g. "0,1,2"; overrides auto-detection
 
 
 def parse_backend_config(name: str, raw: Dict[str, Any]) -> BackendConfig:
@@ -182,6 +184,8 @@ def parse_backend_config(name: str, raw: Dict[str, Any]) -> BackendConfig:
         cuda_module=raw.get("cuda_module"),
         slurm=slurm,
         singularity=singularity,
+        batch_gpu=raw.get("batch_gpu"),
+        cuda_visible_devices=raw.get("cuda_visible_devices"),
     )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import textwrap
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,7 +17,17 @@ from .base import (
 
 
 class SSHBackend(Backend):
-    """Backend for remote execution via SSH + nohup."""
+    """Backend for remote execution via SSH + nohup.
+
+    When ``batch_gpu`` is set in the backend config, submit() accumulates
+    scripts instead of firing them immediately.  Call flush_batch() after
+    all variants are submitted to dispatch a single meta-job that runs K
+    GPU workers sharing a flock-based queue.
+    """
+
+    def __init__(self, config: BackendConfig, project_config: Dict[str, Any]):
+        super().__init__(config, project_config)
+        self._pending: List[Tuple[Dict[str, Any], str]] = []
 
     # ------------------------------------------------------------------
     # prepare.sh handling
@@ -25,6 +36,47 @@ class SSHBackend(Backend):
     def get_prepare_commands(self) -> List[str]:
         """Return source command for prepare.sh, relative to remote_dir."""
         return self._get_remote_prepare_commands()
+
+    # ------------------------------------------------------------------
+    # GPU detection
+    # ------------------------------------------------------------------
+
+    def _resolve_gpu_ids(self) -> List[str]:
+        """Return the list of GPU device IDs to use for batch workers.
+
+        Resolution order:
+        1. ``cuda_visible_devices`` config string (e.g. "0,1,2")
+        2. ``$CUDA_VISIBLE_DEVICES`` on the remote host
+        3. ``nvidia-smi`` on the remote host
+        4. ``range(batch_gpu)`` fallback if remote query fails
+        """
+        cap = self.config.batch_gpu  # optional upper bound
+
+        if self.config.cuda_visible_devices:
+            ids = [g.strip() for g in self.config.cuda_visible_devices.split(",") if g.strip()]
+            return ids[:cap] if cap else ids
+
+        host = self.config.host
+        cmd = (
+            'if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then '
+            '  printf "%s" "$CUDA_VISIBLE_DEVICES" | tr "," "\\n"; '
+            'else '
+            '  nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null; '
+            'fi'
+        )
+        result = subprocess.run(["ssh", host, cmd], capture_output=True, text=True)
+        if result.returncode == 0:
+            ids = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+            if ids:
+                return ids[:cap] if cap else ids
+
+        if cap:
+            return [str(i) for i in range(cap)]
+
+        raise RuntimeError(
+            f"[chester] Could not detect GPUs on {host}. "
+            "Set cuda_visible_devices or batch_gpu in the backend config."
+        )
 
     # ------------------------------------------------------------------
     # Script generation
@@ -156,12 +208,14 @@ class SSHBackend(Backend):
     ) -> Optional[int]:
         """Submit a task for execution on a remote host via SSH.
 
-        Steps:
+        In normal mode (no batch_gpu), submits immediately:
         1. Create remote log dir via ``ssh host mkdir -p {log_dir}``
-        2. Write script to a temp file
-        3. Copy script to remote via ``scp``
-        4. Execute via ``ssh host nohup bash script > output 2>&1 &``
-        5. Save PID to ``.chester_pid``
+        2. Copy script to remote via ``scp``
+        3. Execute via ``ssh host nohup bash script > output 2>&1 &``
+        4. Save PID to ``.chester_pid``
+
+        In batch mode (batch_gpu set), accumulates the script instead.
+        Call :meth:`flush_batch` after all variants are submitted.
 
         Args:
             task: Task dict.
@@ -169,15 +223,27 @@ class SSHBackend(Backend):
             dry: If True, do nothing and return None.
 
         Returns:
-            Remote PID, or None if dry run.
+            Remote PID for single-submit mode, or None for batch/dry mode.
         """
+        if self.config.batch_gpu:
+            if not dry:
+                self._pending.append((task, script_content))
+            return None
+
+        return self._submit_single(task, script_content, dry)
+
+    def _submit_single(
+        self,
+        task: Dict[str, Any],
+        script_content: str,
+        dry: bool = False,
+    ) -> Optional[int]:
         if dry:
             return None
 
         params = task.get("params", {})
         log_dir = params.get("log_dir", "")
         host = self.config.host
-        exp_name = params.get("exp_name", "chester_job")
 
         # 1. Create remote log dir
         subprocess.run(
@@ -224,3 +290,150 @@ class SSHBackend(Backend):
             return pid
         finally:
             os.unlink(local_script)
+
+    # ------------------------------------------------------------------
+    # Batch flush
+    # ------------------------------------------------------------------
+
+    def flush_batch(self) -> None:
+        """Upload all pending scripts and dispatch a single GPU-worker meta-job.
+
+        GPU IDs are resolved via :meth:`_resolve_gpu_ids` (config string →
+        remote env → nvidia-smi → range(batch_gpu) fallback).  One worker
+        process is spawned per GPU; workers atomically pop scripts from a
+        shared queue file using ``flock``.
+        """
+        if not self._pending:
+            return
+
+        host = self.config.host
+        gpu_ids = self._resolve_gpu_ids()
+        n_gpus = len(gpu_ids)
+
+        # Use the parent of the first log_dir as the batch coordination dir
+        first_log_dir = self._pending[0][0].get("params", {}).get("log_dir", "")
+        batch_dir = os.path.dirname(first_log_dir)
+
+        # 1. Create all remote log dirs + batch dir
+        all_dirs = " ".join(
+            shlex.quote(task.get("params", {}).get("log_dir", ""))
+            for task, _ in self._pending
+        )
+        subprocess.run(
+            ["ssh", host, f"mkdir -p {shlex.quote(batch_dir)} {all_dirs}"],
+            check=True,
+        )
+
+        # 2. Upload all scripts, collect remote paths for the queue
+        queue_entries: List[str] = []
+        for task, script_content in self._pending:
+            log_dir = task.get("params", {}).get("log_dir", "")
+            remote_script = f"{log_dir}/chester_run.sh"
+            subprocess.run(
+                ["ssh", host, f"cat > {shlex.quote(remote_script)}"],
+                input=script_content, text=True, check=True,
+            )
+            queue_entries.append(remote_script)
+
+        # 3. Write queue file (one script path per line)
+        queue_file = f"{batch_dir}/chester_queue.txt"
+        subprocess.run(
+            ["ssh", host, f"cat > {shlex.quote(queue_file)}"],
+            input="\n".join(queue_entries) + "\n", text=True, check=True,
+        )
+
+        # 4. Upload gpu_worker.sh
+        worker_file = f"{batch_dir}/chester_gpu_worker.sh"
+        subprocess.run(
+            ["ssh", host, f"cat > {shlex.quote(worker_file)}"],
+            input=self._gpu_worker_script(), text=True, check=True,
+        )
+
+        # 5. Upload meta_job.sh
+        meta_file = f"{batch_dir}/chester_meta_job.sh"
+        subprocess.run(
+            ["ssh", host, f"cat > {shlex.quote(meta_file)}"],
+            input=self._meta_job_script(batch_dir, queue_file, worker_file, gpu_ids),
+            text=True, check=True,
+        )
+
+        # 6. Fire meta-job via nohup
+        q_meta = shlex.quote(meta_file)
+        q_log = shlex.quote(f"{batch_dir}/chester_batch_output.log")
+        result = subprocess.run(
+            ["ssh", host, f"nohup bash {q_meta} > {q_log} 2>&1 & echo $!"],
+            capture_output=True, text=True, check=True,
+        )
+        pid = int(result.stdout.strip())
+
+        # Save batch PID alongside queue for manual inspection
+        subprocess.run(
+            ["ssh", host,
+             f"echo {pid} > {shlex.quote(batch_dir + '/.chester_batch_pid')}"],
+            check=True,
+        )
+
+        print(
+            f"[chester] Batch submitted: {len(self._pending)} scripts "
+            f"across {n_gpus} GPUs {gpu_ids} on {host} (PID={pid})\n"
+            f"[chester] Tail batch log: ssh {host} tail -f {q_log}"
+        )
+        self._pending.clear()
+
+    # ------------------------------------------------------------------
+    # Batch script templates
+    # ------------------------------------------------------------------
+
+    def _gpu_worker_script(self) -> str:
+        return textwrap.dedent("""\
+            #!/usr/bin/env bash
+            # Chester GPU batch worker — pops scripts from a shared queue using flock.
+            # Usage: bash chester_gpu_worker.sh <gpu_id> <queue_file>
+            GPU=$1
+            QUEUE=$2
+            LOCK="${QUEUE}.lock"
+
+            echo "[chester-worker gpu=$GPU] Starting"
+            while true; do
+                script=$(
+                    flock -x "$LOCK" bash -c '
+                        line=$(head -1 "$1" 2>/dev/null)
+                        [ -z "$line" ] && exit 0
+                        tail -n +2 "$1" > "${1}.tmp" && mv "${1}.tmp" "$1"
+                        printf "%s" "$line"
+                    ' _ "$QUEUE"
+                )
+                [ -z "$script" ] && break
+                echo "[chester-worker gpu=$GPU] Running: $script"
+                CUDA_VISIBLE_DEVICES=$GPU bash "$script" \
+                    || echo "[chester-worker gpu=$GPU] Script failed (continuing): $script"
+            done
+            echo "[chester-worker gpu=$GPU] Queue empty, done."
+        """)
+
+    def _meta_job_script(
+        self,
+        batch_dir: str,
+        queue_file: str,
+        worker_file: str,
+        gpu_ids: List[str],
+    ) -> str:
+        lines = [
+            "#!/usr/bin/env bash",
+            f"QUEUE={shlex.quote(queue_file)}",
+            f"WORKER={shlex.quote(worker_file)}",
+            "",
+            "pids=()",
+        ]
+        for gpu_id in gpu_ids:
+            log_file = shlex.quote(f"{batch_dir}/chester_worker_{gpu_id}.log")
+            lines.append(f'bash "$WORKER" {shlex.quote(str(gpu_id))} "$QUEUE" > {log_file} 2>&1 &')
+            lines.append("pids+=($!)")
+        lines += [
+            "",
+            'for pid in "${pids[@]}"; do',
+            '    wait "$pid"',
+            "done",
+            'echo "[chester] All GPU workers finished."',
+        ]
+        return "\n".join(lines) + "\n"
