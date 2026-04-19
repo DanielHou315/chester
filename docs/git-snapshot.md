@@ -9,12 +9,14 @@ run_experiment_lite(..., git_snapshot=False)
 
 ## Files written to `{log_dir}/`
 
+Files are written into the **first variant's local log directory** (the same directory where `output.log` lands for the first job in a batch).
+
 | File | Contents |
 |------|----------|
 | `git_info.json` | Commit hash, branch, dirty flag, timestamp, submodule status, untracked symlinks |
-| `git_diff.patch` | Full unified diff of all staged/unstaged changes; untracked file names as comments; dirty submodule diffs in labelled sections |
+| `git_diff.patch` | `git diff HEAD` output (staged + unstaged tracked changes); untracked file names listed as comments; dirty submodule diffs appended in labelled sections |
 
-`git_diff.patch` is only written when there are uncommitted changes (in the parent repo or any submodule).
+`git_diff.patch` is only written when there are uncommitted changes in the parent repo or any submodule. Untracked file **names** (not content) are recorded as comments.
 
 ## `git_info.json` schema
 
@@ -28,20 +30,35 @@ run_experiment_lite(..., git_snapshot=False)
     {
       "path": "third_party/mylib",
       "hash": "def5678...",
+      "status": "up_to_date",
       "dirty": false,
       "untracked_files": []
     }
   ],
-  "untracked_symlinks": ["data -> /mnt/nfs/data"]
+  "untracked_symlinks": [
+    {
+      "path": "data",
+      "target": "/mnt/nfs/data",
+      "target_exists": true
+    }
+  ]
 }
 ```
+
+### Field notes
+
+- `dirty` (top-level): `true` if `git status --porcelain` reports any tracked-file changes, ignoring submodule state.
+- `submodules[*].status`: one of `"up_to_date"`, `"modified"`, `"uninitialized"`, `"merge_conflict"` (from the leading character of `git submodule status`).
+- `submodules[*].description`: optional — present only when `git submodule status` includes a tag/branch annotation in parentheses.
+- `untracked_symlinks`: symlinks present in the working tree that are **not** tracked by git (mode `120000`). Common directories (`data/`, `wandb/`, `.venv/`, `.worktrees/`, etc.) are excluded from the scan.
 
 ## Submodule tracking
 
 For each submodule:
-- `dirty: bool` — whether the submodule has uncommitted changes
-- `untracked_files: list` — list of untracked files in the submodule
-- If dirty, the submodule's diff is appended to `git_diff.patch` under a `# === Submodule: <path> ===` header
+- `status: str` — `"up_to_date"` | `"modified"` | `"uninitialized"` | `"merge_conflict"`
+- `dirty: bool` — whether the submodule working tree has uncommitted changes
+- `untracked_files: list[str]` — untracked file paths inside the submodule
+- If dirty, the submodule's diff (`git diff HEAD` inside the submodule) is appended to `git_diff.patch` under a `# === Submodule: <path> ===` header, followed by untracked file names as comments
 
 ## Recovery
 

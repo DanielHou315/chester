@@ -61,7 +61,7 @@ package_manager: uv
 
 ### `hydra_config_path`
 **Type:** string (path)  
-**Default:** not set  
+**Default:** `configs`  
 **Description:** Path to Hydra configuration directory, relative to project root. Used when `hydra_enabled=True` is passed at launch time. If set, Chester passes `--config-path=<hydra_config_path>` to the launcher script.
 
 ```yaml
@@ -94,6 +94,15 @@ rsync_exclude:
   - ".venv/"
 ```
 
+### `project_path`
+**Type:** string (path)  
+**Default:** auto-detected  
+**Description:** Absolute path to the project root. Normally you do not set this — Chester auto-detects it from the location of the config file (the directory containing `.chester/` for `.chester/config.yaml`, or the directory containing `chester.yaml` for the deprecated location). You can override it explicitly if your layout is non-standard.
+
+```yaml
+project_path: /home/user/myproject
+```
+
 ## Global Singularity Block (Optional)
 
 The top-level `singularity:` block defines shared container defaults inherited by all backends. Each backend can override or extend these settings. If present, this block applies to any backend that does not explicitly set `singularity.enabled: false`.
@@ -115,13 +124,13 @@ singularity:
 - **`image`** (string): Path to Singularity image (`.sif` file). Can be relative (to project root) or absolute.
 - **`workdir`** (string): Working directory inside the container.
 - **`gpu`** (boolean): Whether to pass `--nv` (NVIDIA GPU support) to Singularity.
-- **`enabled`** (boolean):
-  - `false` (default): Singularity is opt-in. Activate per-run with `use_singularity=True` in launcher or `--singularity` CLI flag.
-  - `true`: Singularity is always enabled for this backend (unless backend overrides it).
+- **`enabled`** (boolean, default `true`): Controls whether Singularity is used for this backend.
+  - `true` (code default): Singularity is always used when a `singularity:` block is present.
+  - `false`: Singularity is present in config but disabled. Set this in the global block to make Singularity opt-in, then activate per-run with `use_singularity=True` in the launcher or `--singularity` CLI flag.
 - **`prepare`** (string): Path to a `prepare.sh` script to run inside the container before the job. Relative to project root.
 - **`mounts`** (list): Mount points in format `host_path:container_path`. Supports `~` for home directory expansion.
 
-When a backend's `singularity:` block is present, it is merged with and overrides the global block. See [Singularity](singularity.md) for detailed container configuration.
+When a backend's `singularity:` block is present, it is merged with the global block field-by-field: the global block is used as the base, and each field present in the backend's block overrides the corresponding global field. Fields absent from the backend's block are inherited from the global block. When a backend has no `singularity:` block at all, the global block is inherited verbatim. See [Singularity](singularity.md) for detailed container configuration.
 
 ## Backends Map
 
@@ -136,13 +145,13 @@ backends:
   myserver:
     type: ssh
     host: user@myserver.edu
-    workdir: /home/user/workdir
+    remote_dir: /home/user/workdir
     prepare: .chester/backends/myserver/prepare.sh
 
   gpu_cluster:
     type: slurm
     host: user@login.cluster.edu
-    workdir: /scratch/user/workdir
+    remote_dir: /scratch/user/workdir
     prepare: .chester/backends/gpu_cluster/prepare.sh
     slurm:
       partition: gpu
@@ -218,13 +227,11 @@ backends:
   myserver:
     type: ssh
     host: user@myserver.edu
-    workdir: /home/user/chester-jobs
+    remote_dir: /home/user/chester-jobs
     extra_sync_dirs:
       - data/datasets
     prepare: .chester/backends/myserver/prepare.sh
-    ssh:
-      batch_gpu: true
-      num_gpus: 4
+    batch_gpu: 4
     singularity:
       enabled: false
 
@@ -232,7 +239,7 @@ backends:
   gpu_cluster:
     type: slurm
     host: user@login.cluster.edu
-    workdir: /scratch/user/chester-jobs
+    remote_dir: /scratch/user/chester-jobs
     prepare: .chester/backends/gpu_cluster/prepare.sh
     singularity:
       enabled: true
@@ -251,7 +258,7 @@ backends:
   cpu_cluster:
     type: slurm
     host: user@login.cluster.edu
-    workdir: /scratch/user/chester-jobs
+    remote_dir: /scratch/user/chester-jobs
     prepare: .chester/backends/cpu_cluster/prepare.sh
     slurm:
       partition: cpu
@@ -285,7 +292,7 @@ backends:
   myserver:
     type: ssh
     host: user@myserver.edu
-    workdir: /home/user/jobs
+    remote_dir: /home/user/jobs
     extra_sync_dirs:
       - data/datasets
       - models/checkpoints

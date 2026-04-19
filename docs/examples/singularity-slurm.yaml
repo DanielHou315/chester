@@ -80,8 +80,7 @@ backends:
       cpus_per_gpu: 8
       mem_per_gpu: 64G
       email_end: you@university.edu
-      extra_directives:
-        - "--account=mylab"
+      account: mylab
     # Override singularity config for this backend: always enabled, no fakeroot
     singularity:
       enabled: true           # always use singularity on this backend

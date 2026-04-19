@@ -23,7 +23,7 @@ backends:
 
 **`launch_with_subprocess`** (bool)
 - `True` (default): Launch with `Popen` for async execution; up to `max_num_processes` can run concurrently
-- `False`: Execute function directly in the current process (blocking)
+- `False`: Run the experiment in-process via `run_hydra_command` (requires `hydra_enabled=True`)
 
 **`wait_processes`** (bool)
 - `True`: Run subprocesses sequentially (one finishes before the next starts)
@@ -86,11 +86,12 @@ backends:
 
 ```
 {remote_dir}/{log_dir}/{sub_dir}/{exp_prefix}/{exp_name}/
-├── ssh_launch.sh        # generated script
-├── stdout.log
-├── stderr.log
+├── chester_run.sh       # generated script (uploaded via SCP)
+├── output.log           # combined stdout and stderr
 └── chester_xtrace.log   # bash -x trace
 ```
+
+A local copy of the script is also saved as `ssh_launch.sh` in the local batch directory for debugging.
 
 ### Requirements
 
@@ -107,8 +108,8 @@ In standard mode, each call to `run_experiment_lite()` immediately launches a jo
 `batch_gpu: N` enables batch mode for multi-GPU SSH servers:
 
 - Accumulates all scripts from the variant loop in memory
-- On `flush_backend(mode)`, dispatches one script per GPU concurrently (up to `N` parallel jobs)
-- Auto-detects server GPU count, capped at `N`
+- On `flush_backend(mode)`, uploads all scripts to a shared queue on the remote and spawns N GPU worker processes (one per detected GPU, capped at `N`); each worker atomically pops scripts from the queue using `flock` until the queue is empty
+- GPU count is auto-detected (via `$CUDA_VISIBLE_DEVICES` or `nvidia-smi` on the remote), capped at `N`; `batch_gpu` alone is sufficient as a fallback if detection fails
 - **Must call `flush_backend(mode)` after the variant loop** when using batch mode
 
 ```python
@@ -176,10 +177,11 @@ backends:
       ntasks_per_node: 1
       email_end: user@university.edu       # email on END and FAIL
       email_begin: user@university.edu     # email on BEGIN (optional, adds to email_end)
-      extra_directives:                    # verbatim #SBATCH lines
-        - "--account=myaccount"
-        - "--qos=high"
-        - "--constraint=h100"
+      # Any unknown key becomes #SBATCH --key=value:
+      account: myaccount                   # → #SBATCH --account=myaccount
+      qos: high                            # → #SBATCH --qos=high
+      constraint: h100                     # → #SBATCH --constraint=h100
+      gpu_cmode: shared                    # → #SBATCH --gpu_cmode=shared
 ```
 
 ### Execution Flow
@@ -203,9 +205,11 @@ The `slurm:` section maps to `#SBATCH` directives:
 | `ntasks_per_node` | `--ntasks-per-node=`   | Tasks per node                   |
 | `email_end`       | `--mail-user=`, `--mail-type=END,FAIL` | Email on job end/failure |
 | `email_begin`     | `--mail-user=`, `--mail-type=BEGIN` | Email on job start (merged with email_end if both set) |
-| `extra_directives`| verbatim lines         | Any custom #SBATCH lines         |
+| *(any other key)* | `--key=value`          | Passed verbatim as an `#SBATCH` directive |
 
 **Auto-added directives:** `-o` (stdout), `-e` (stderr), and `--job-name` are added automatically per job.
+
+**Arbitrary directives:** Any key in the `slurm:` block that isn't one of the named fields above is forwarded as `#SBATCH --key=value`. Boolean `true` emits `#SBATCH --key` (no value); `false` omits the line.
 
 ### Module Management
 

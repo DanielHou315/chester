@@ -13,8 +13,10 @@ run_experiment_lite(
 
 **Set config path in `.chester/config.yaml`:**
 ```yaml
-hydra_config_path: configs    # relative to project root
+hydra_config_path: configs    # relative to project root; resolved to absolute path at load time
 ```
+
+`hydra_config_path` is used **only** in local in-process mode (`launch_with_subprocess=False`), where `run_hydra_command` calls `hydra.initialize_config_dir(config_dir=hydra_config_path)`. It is **not** injected as `--config-path` when building subprocess command strings — for subprocess-based launches the script receives overrides only, and Hydra resolves the config path from the script's own `@hydra.main` decorator.
 
 ## Command format
 
@@ -58,7 +60,19 @@ vg.add('hidden', ["${eval:'512 * 2'}"])
 # python -m main schedule=${eval:'[0.1 * i for i in range(10)]'} data_dir=${oc.env:DATA_DIR,/tmp/data} ...
 ```
 
-Any value matching `${...}` is passed without quoting. Strings with spaces are double-quoted. Lists are formatted as `[v1,v2,v3]`.
+A string is passed unquoted only when the **entire value** matches `${...}` (i.e. `value.startswith("${") and value.endswith("}")`). Partial interpolations like `"prefix_${x}"` are treated as plain strings, not interpolations. Strings with spaces are double-quoted. Lists are formatted as `[v1,v2,v3]` (no spaces).
+
+## Filtered keys
+
+`variant_to_hydra_overrides` silently drops these Chester-internal keys so they never appear as Hydra overrides:
+
+| Key | Set by |
+|-----|--------|
+| `chester_first_variant` | `vg.variants()` — marks first variant in the list |
+| `chester_last_variant` | `vg.variants()` — marks last variant in the list |
+| `is_debug` | Legacy debug flag |
+
+Three additional internal keys (`_chester_seq_identity`, `_chester_pred_identities`, `_chester_serial_steps`) are popped from the variant by `run_experiment_lite` itself (step 4 of the dispatch flow) before `variant_to_hydra_overrides` is ever called, so they never reach the override formatter.
 
 ## Typical launcher pattern
 

@@ -6,8 +6,8 @@ Chester supports running experiments inside Singularity containers across all th
 
 When a backend has a `singularity:` config block, every command (prepare scripts, Python execution, etc.) runs inside the container via `singularity exec`. The `enabled` flag controls whether singularity is active:
 
-- **`enabled: false` (default)** — Singularity is dormant. Activate at runtime with `use_singularity=True` in `run_experiment_lite()` or the `--singularity` CLI flag.
-- **`enabled: true`** — Always use singularity for that backend (typical for SLURM clusters where the image is pre-built and staged).
+- **`enabled: true` (default)** — Singularity is used whenever a `singularity:` block is present. This is the default when a `singularity:` block exists in the config.
+- **`enabled: false`** — Singularity is dormant even though a config block is present. Activate at runtime with `use_singularity=True` in `run_experiment_lite()` or the `--singularity` CLI flag.
 
 ## Full Singularity Config Reference
 
@@ -15,7 +15,7 @@ When a backend has a `singularity:` config block, every command (prepare scripts
 singularity:
   image: /path/to/image.sif     # required; relative paths resolved from project root
   gpu: true                      # --nv flag (NVIDIA GPU passthrough)
-  fakeroot: true                 # --fakeroot flag (default: false)
+  fakeroot: true                 # --fakeroot flag (default: true)
   pid_namespace: true            # --pid (isolate PID namespace)
   writable_tmpfs: true           # --writable-tmpfs (in-memory ephemeral overlay)
   workdir: /workspace            # --pwd inside the container
@@ -29,15 +29,14 @@ singularity:
   prepare: .chester/backends/singularity/prepare.sh   # sourced INSIDE container
   overlay: .containers/myoverlay.ext3                 # persistent ext3 overlay image
   overlay_size: 10240             # MB when creating overlay (default: 10240 = 10 GB)
+  build_script: null              # reserved field; not used by any backend
 ```
 
 ## Option Details
 
 ### `image` (required)
 
-Path to the Singularity image (`.sif` file). Relative paths are resolved:
-- **Local backend**: relative to project root
-- **SSH/SLURM backends**: relative to `remote_dir` on the remote host
+Path to the Singularity image (`.sif` file). Relative paths are resolved against `project_path` (the local project root) at script-generation time, for all backend types.
 
 Example:
 ```yaml
@@ -53,14 +52,16 @@ Adds the `--nv` flag to `singularity exec` for NVIDIA GPU passthrough. Required 
 gpu: true    # adds --nv
 ```
 
-### `fakeroot: true`
+### `fakeroot`
 
 Adds the `--fakeroot` flag for pseudo-root operations (e.g., installing packages with `apt`, `yum`, etc.). Useful when building overlays or writing to system directories inside the container.
 
-**Warning**: Not available on all HPC clusters. For example, Great Lakes (University of Michigan) disables fakeroot due to security policies.
+**Default: `true`** — fakeroot is enabled unless you explicitly set `fakeroot: false`.
+
+**Warning**: Not available on all HPC clusters. For example, Great Lakes (University of Michigan) disables fakeroot due to security policies. Set `fakeroot: false` explicitly on those clusters.
 
 ```yaml
-fakeroot: true    # adds --fakeroot
+fakeroot: false   # disable --fakeroot (e.g. on clusters that forbid it)
 ```
 
 ### `pid_namespace: true`
@@ -102,7 +103,7 @@ List of bind mounts passed as `--bind` flags. Supports multiple formats:
 |--------|---------|----------|
 | Simple path | `/usr/share/glvnd` | Bind to the same path in container |
 | Explicit mapping | `src:dst` | Bind host `src` to container `dst` |
-| Relative `src` | `src:/workspace/src` | Resolve `src` relative to project root (local) or `remote_dir` (remote) |
+| Relative `src` | `src:/workspace/src` | Resolve `src` relative to `project_path` (the local project root, for all backends) |
 | Absolute paths | `/abs/path:/container/path` | Use as-is |
 | Tilde expansion | `~/.cache:/root/.cache` | Left as-is; bash expands at runtime |
 | Env vars | `$HOME/.config:/root/.config` | Left as-is; bash expands at runtime |
@@ -119,14 +120,18 @@ mounts:
   - $HOME/.config:/root/.config           # env var expanded
 ```
 
-### `prepare`
+### `prepare` (in-container)
 
-Path to a shell script sourced **inside the container** before the Python command runs. Use for in-container environment setup:
-- Activating a conda environment
-- Setting LD_LIBRARY_PATH
-- Running container-specific initialization
+Path to a shell script sourced **inside the container** before the Python command runs. This is `singularity.prepare`, distinct from `backend.prepare`:
 
-The script is sourced (not executed), so it runs in the same shell as the Python command.
+| Field | Where it runs | Purpose |
+|-------|--------------|---------|
+| `singularity.prepare` | Inside the container (after `singularity exec`) | Activate conda, set `LD_LIBRARY_PATH`, container-specific init |
+| `backend.prepare` | On the host before `singularity exec` | Load modules, set host env vars, HPC-specific setup |
+
+Relative paths are resolved against `workdir` (the container working directory) if `workdir` is set; otherwise they are used as-is relative to the container's working directory.
+
+The script is sourced (not executed as a subprocess), so environment changes take effect in the shell that runs the Python command.
 
 ```yaml
 prepare: .chester/backends/singularity/prepare.sh
@@ -179,9 +184,60 @@ conda activate myenv
 
 On first run, Chester creates the 20 GB overlay. On subsequent runs, Chester reuses it, preserving any installed packages or data.
 
+### `build_script` (reserved, currently unused)
+
+`build_script: null` (default) — This field is present in the `SingularityConfig` dataclass as a reserved stub. No backend reads or uses it for script generation. It has no effect and can be omitted.
+
+## Generated `singularity exec` Command
+
+Chester assembles the `singularity exec` command in a fixed order. Given this config:
+
+```yaml
+singularity:
+  image: .containers/base.sif
+  mounts:
+    - /usr/share/glvnd
+    - src:/workspace/src
+  fakeroot: true
+  gpu: true
+  writable_tmpfs: true
+  pid_namespace: true
+  overlay: .containers/pkg.ext3
+  workdir: /workspace
+```
+
+The generated command is:
+
+```
+singularity exec \
+  -B /usr/share/glvnd \
+  -B /abs/project/src:/workspace/src \
+  --fakeroot \
+  --nv \
+  --writable-tmpfs \
+  --pid \
+  --overlay /abs/project/.containers/pkg.ext3 \
+  --pwd /workspace \
+  /abs/project/.containers/base.sif \
+  /bin/bash -c '<inner commands>'
+```
+
+Flag order (from `wrap_with_singularity` in `base.py`):
+1. `-B` mounts (one per bind pair, in list order)
+2. `--fakeroot` (if `fakeroot: true`)
+3. `--nv` (if `gpu: true`)
+4. `--writable-tmpfs` (if `writable_tmpfs: true`)
+5. `--pid` (if `pid_namespace: true`)
+6. `--overlay <path>` (if `overlay` is set)
+7. `--pwd <workdir>` (if `workdir` is set)
+8. Image path
+9. `/bin/bash -c '<inner commands>'`
+
+Inner commands are the singularity `prepare` script (if set) followed by the Python command, joined with `&&`.
+
 ## Global vs. Backend-Specific Singularity Config
 
-A top-level `singularity:` block in `.chester/config.yaml` defines shared defaults inherited by all backends:
+A top-level `singularity:` block in `.chester/config.yaml` defines shared defaults inherited by all backends. The merge behavior is **field-by-field**: the global block is used as the base, and any fields present in a backend's own `singularity:` block override the corresponding global fields.
 
 ```yaml
 singularity:
@@ -192,16 +248,18 @@ singularity:
 backends:
   local:
     type: local
-    # inherits global singularity config: image=base.sif, gpu=true, enabled=false
+    # no singularity block → inherits global config entirely:
+    # image=base.sif, gpu=true, enabled=false
 
   mycluster:
     type: slurm
     singularity:
-      enabled: true        # override: always on for this backend
-      # still has image, gpu from global
+      enabled: true        # overrides global enabled=false
+      pid_namespace: true  # adds pid_namespace; image and gpu still inherited
+      # result: image=base.sif, gpu=true, enabled=true, pid_namespace=true
 ```
 
-**Important**: A backend's `singularity:` block does a **full replacement** of the global block, not a merge. If you set any field at the backend level, re-specify all fields you need:
+**Merge rule**: `merged = {**global_singularity, **backend_singularity}`. Global fields that are not present in the backend block are preserved. Fields present in both take the backend value.
 
 ```yaml
 singularity:                 # global defaults
@@ -213,15 +271,16 @@ backends:
   mycluster:
     type: slurm
     singularity:
-      enabled: true
-      image: .containers/base.sif  # must re-specify; full replacement
-      gpu: true
-      fakeroot: false
-      pid_namespace: true
-      mounts:
+      enabled: true         # overrides enabled
+      fakeroot: false       # overrides fakeroot (which defaults to true)
+      pid_namespace: true   # adds pid_namespace
+      mounts:               # overrides mounts (not appended)
         - /usr/share/glvnd
         - src:/workspace/src
+      # image and gpu are inherited from global
 ```
+
+Note: `mounts` is replaced entirely, not appended. If the global block has mounts and a backend block also has mounts, only the backend's list is used.
 
 ## Runtime Override: `use_singularity` Parameter
 
@@ -414,7 +473,7 @@ The `--pid` flag isolates the PID namespace, ensuring all container processes ar
 
 **Solutions**:
 1. Check absolute path correctness (for absolute mounts, both sides must exist)
-2. For relative mounts, verify resolution: relative to project root (local) or `remote_dir` (remote)
+2. For relative mounts, verify resolution: relative to `project_path` (the local project root) for all backends
 3. Verify bind mount syntax: `src:dst` (no spaces)
 4. Check singular vs. plural: mounts must be a list (`-`)
 
@@ -423,7 +482,7 @@ The `--pid` flag isolates the PID namespace, ensuring all container processes ar
 **Symptom**: `singularity exec: error while loading shared libraries` or "image not found".
 
 **Solutions**:
-1. Verify image path: relative to project root (local) or `remote_dir` (remote)
+1. Verify image path: relative paths are resolved against `project_path` (local project root) at script-generation time
 2. Check file permissions: `ls -la /path/to/image.sif`
 3. On remote backend, ensure image is synced or mounted (e.g., on NFS)
 

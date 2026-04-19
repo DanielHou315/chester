@@ -88,8 +88,9 @@ vg.derive('dataset_names', lambda v: [os.path.basename(p) for p in v['dataset_pa
 ```
 
 The `fn` receives the full variant dict and returns a single value (not a list). Derived parameters:
-- Never vary across variants (function applied once per variant)
-- Cannot be referenced by dependent parameters
+- Vary per variant only if `fn` uses varying inputs — the function is applied once per variant
+- Do not appear in `vg.variations()`, so they are not factored into the experiment name hash
+- Cannot be referenced by lambda-dependent parameters (lambdas run before derivations are applied)
 - Cannot use `order=`
 
 ---
@@ -123,7 +124,7 @@ for v in vg.variants(randomized=True):
     run_experiment_lite(...)
 ```
 
-**Incompatible with `order=` parameters.** If any parameter has `order='serial'` or `order='dependent'`, do not use `randomized=True`.
+**Incompatible with `order=` parameters.** If any parameter has `order='serial'` or `order='dependent'`, `randomized=True` raises `ValueError` — ordered execution requires deterministic variant ordering.
 
 ---
 
@@ -190,12 +191,15 @@ Job 5 (seed=3, task=training)
 Job 6 (seed=3, task=evaluate) ← depends on Job 5
 ```
 
-Multiple dependent keys create per-combination chains:
+Multiple dependent keys each create their own per-axis predecessor chain, independently:
 
 ```python
 vg.add('task', ['training', 'evaluate'], order='dependent')
 vg.add('phase', ['warmup', 'finetune'], order='dependent')
-# Ordering: each (task, phase) combo depends on all lower-priority combos completing
+# task axis: evaluate depends on training (for same phase and seed)
+# phase axis: finetune depends on warmup (for same task and seed)
+# A variant with task=evaluate, phase=finetune gets TWO predecessors:
+#   (task=training, phase=finetune) and (task=evaluate, phase=warmup)
 ```
 
 #### Non-SLURM Safety Check
@@ -403,10 +407,10 @@ print(f'{len(vg.variants())} variants')
 
 ### Randomized + order= conflict
 
-Remove `randomized=True` or remove all `order=` parameters from any key.
+`vg.variants(randomized=True)` raises `ValueError` if any parameter uses `order='serial'` or `order='dependent'`. Remove `randomized=True` or remove all `order=` parameters.
 
 ```python
-# ✗ Error
+# ✗ ValueError raised
 for v in vg.variants(randomized=True):  # and vg has order='serial' or 'dependent'
     ...
 
@@ -414,3 +418,42 @@ for v in vg.variants(randomized=True):  # and vg has order='serial' or 'dependen
 for v in vg.variants(randomized=True):  # no order= parameters
     ...
 ```
+
+---
+
+## `run_experiment_lite` Quick Reference
+
+All parameters accepted by `run_experiment_lite()`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `stub_method_call` | — | Your training function `fn(variant, log_dir, exp_name)` |
+| `variant` | — | Dict of parameters for this run |
+| `mode` | `"local"` | Backend name from `.chester/config.yaml` |
+| `exp_prefix` | `"experiment"` | Prefix for log directory and experiment name |
+| `exp_name` | `None` | Override the auto-generated name |
+| `log_dir` | `None` | Override the log directory |
+| `sub_dir` | `"train"` | Subdirectory under log_dir |
+| `variations` | `[]` | Keys that vary (pass `vg.variations()`); used in experiment naming |
+| `script` | `None` | Python script/module to run (default: chester worker) |
+| `python_command` | `"python"` | Base python invocation (e.g. `"python -m"`) |
+| `env` | `{}` | Extra environment variables `{KEY: VALUE}` prepended to the command |
+| `dry` | `False` | Print commands without executing |
+| `print_command` | `True` | Print the generated command/script at submission time |
+| `launch_with_subprocess` | `True` | Local only: Popen (async) vs direct call |
+| `wait_processes` | `False` | Local only: run subprocesses sequentially |
+| `max_num_processes` | `10` | Local only: max concurrent Popen subprocesses |
+| `use_singularity` | `None` | `True`/`False` to override backend config; `None` = respect config |
+| `slurm_overrides` | `None` | Dict of per-run SLURM overrides (e.g. `{"time": "4:00:00"}`) |
+| `hydra_enabled` | `False` | Use Hydra `key=value` override format |
+| `hydra_flags` | `None` | Extra Hydra flags e.g. `{"multirun": True}` |
+| `git_snapshot` | `True` | Save `git_info.json` + `git_diff.patch` to log dir |
+| `confirm` | `False` | Skip the remote submission confirmation prompt |
+| `fresh` | `False` | Delete existing `exp_prefix` dirs before launching (always prompts) |
+| `skip_dependency_check` | `False` | Suppress `ValueError` when `order="dependent"` is used on non-SLURM |
+| `submodule_commits` | `None` | `{submodule_path: git_ref}` — pin submodule versions per job |
+| `extra_sync_dirs` | `None` | Extra dirs to rsync to remote before submission |
+| `sync_env` | `None` | Dead parameter — accepted for backwards compatibility but not used by any current backend |
+| `pre_commands` | `None` | Dead parameter — accepted and stored in task params but not read by any current backend |
+| `use_gpu` | `False` | Dead parameter — accepted for backwards compatibility but fully ignored |
+| `batch_tasks` | `None` | Advanced: pre-built task list (bypasses `stub_method_call` serialization) |
