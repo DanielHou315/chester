@@ -76,3 +76,23 @@ def test_monitor_jobs_handles_done_orphans(tmp_path):
 
     mock_pull.assert_called_once()
     mock_del.assert_called_once_with(tmp_path, job_id)
+
+
+def test_cli_monitor_no_jobs(tmp_path, capsys):
+    """cmd_monitor exits cleanly when no pending jobs match prefix."""
+    from chester.cli import cmd_monitor
+
+    cmd_monitor(job_store_dir=tmp_path, prefix="nonexistent", poll_interval=0, bare=False)
+    captured = capsys.readouterr()
+    assert "No pending jobs" in captured.out
+
+
+def test_cli_monitor_exits_when_all_done(tmp_path):
+    """cmd_monitor exits after all matching jobs finish."""
+    job_id = _make_job(tmp_path, exp_name="my_exp_1")
+
+    with patch("chester.auto_pull.execute_pull_for_job", return_value="pulled"), \
+         patch("chester.job_store.delete_job_file"), \
+         patch("chester.auto_pull.time.sleep"):
+        from chester.cli import cmd_monitor
+        cmd_monitor(job_store_dir=tmp_path, prefix="test", poll_interval=0, bare=False)

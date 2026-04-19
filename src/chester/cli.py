@@ -5,13 +5,14 @@ Entry point: chester <subcommand> [options]
 
 Subcommands:
     pull-remote   Check all pending remote jobs and pull completed ones.
+    monitor       Block until all pending remote jobs finish (poll loop).
 """
 
 import argparse
 from pathlib import Path
 from typing import Optional
 
-from chester.auto_pull import execute_pull_for_job
+from chester.auto_pull import execute_pull_for_job, monitor_jobs
 from chester.job_store import (
     get_default_job_store_dir,
     load_pending_jobs,
@@ -71,6 +72,24 @@ def cmd_pull_remote(
     )
 
 
+def cmd_monitor(
+    job_store_dir: Path,
+    prefix: Optional[str],
+    poll_interval: int,
+    bare: bool,
+):
+    """Block until all pending jobs (optionally filtered by prefix) finish."""
+    jobs = load_pending_jobs(job_store_dir, prefix=prefix)
+
+    if not jobs:
+        filter_msg = f" (prefix='{prefix}')" if prefix else ""
+        print(f'[chester] No pending jobs found in {job_store_dir}{filter_msg}')
+        return
+
+    job_ids = [j["job_id"] for j in jobs]
+    monitor_jobs(job_ids, job_store_dir, poll_interval=poll_interval, bare=bare)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='chester',
@@ -86,6 +105,14 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument('--dry-run', action='store_true',
                     help='Print what would be checked without doing anything')
 
+    mon = sub.add_parser('monitor', help='Block until all pending remote jobs finish')
+    mon.add_argument('--prefix', type=str, default=None,
+                     help='Only monitor jobs matching this exp_prefix')
+    mon.add_argument('--poll', type=int, default=60, metavar='SECONDS',
+                     help='Poll interval in seconds (default: 60)')
+    mon.add_argument('--bare', action='store_true',
+                     help='Exclude large files (*.pkl, *.pth, etc.) when pulling')
+
     return parser
 
 
@@ -99,6 +126,13 @@ def main():
             prefix=args.prefix,
             bare=args.bare,
             dry_run=args.dry_run,
+        )
+    elif args.command == 'monitor':
+        cmd_monitor(
+            job_store_dir=get_default_job_store_dir(),
+            prefix=args.prefix,
+            poll_interval=args.poll,
+            bare=args.bare,
         )
     else:
         parser.print_help()
