@@ -767,6 +767,52 @@ def rsync_code_v2(remote_host, remote_dir, project_path, rsync_include, rsync_ex
         raise subprocess.CalledProcessError(result.returncode, cmd)
 
 
+def rsync_extra_dirs(remote_host, remote_dir, project_path, extra_sync_dirs):
+    """Sync extra directories to remote before job submission.
+
+    Paths are resolved as follows:
+    - Relative: local = project_path/dir, remote = remote_dir/dir
+    - Absolute: same path on remote, but /home/<local_user>/ prefix is substituted
+      with /home/<remote_user>/ when the two users differ.
+
+    No exclude patterns are applied — these syncs intentionally override rsync_exclude.
+    Raises RuntimeError immediately if any rsync fails (fail-fast).
+    """
+    import getpass
+
+    local_home = os.path.expanduser("~")
+    # Parse remote home from remote_dir if it follows /home/<user>/... convention
+    parts = remote_dir.split("/")
+    remote_home = f"/home/{parts[2]}" if len(parts) >= 3 and parts[1] == "home" else None
+
+    for dir_path in extra_sync_dirs:
+        if os.path.isabs(dir_path):
+            local_path = dir_path
+            if remote_home and local_path.startswith(local_home + "/"):
+                remote_path = remote_home + local_path[len(local_home):]
+            else:
+                remote_path = local_path
+        else:
+            local_path = os.path.join(project_path, dir_path)
+            remote_path = os.path.join(remote_dir, dir_path)
+
+        print(f'[chester] rsync extra dir: {local_path} -> {remote_host}:{remote_path}')
+        cmd = [
+            "rsync", "-avzhK", "--info=progress2", "--mkpath",
+            "--skip-compress=sif/img/iso/gz/bz2/xz/zst/zip/7z",
+            local_path.rstrip("/") + "/",
+            f"{remote_host}:{remote_path}",
+        ]
+        print(' '.join(cmd))
+        result = subprocess.run(cmd)
+        # Exit code 24 = "some files vanished before transfer" — harmless race condition
+        if result.returncode not in (0, 24):
+            raise RuntimeError(
+                f"[chester] rsync extra dir failed (exit {result.returncode}): "
+                f"{local_path} -> {remote_host}:{remote_path}"
+            )
+
+
 def _format_size(size_bytes: int) -> str:
     """Format a byte count as a human-readable string."""
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
@@ -1108,6 +1154,7 @@ def run_experiment_lite(
         fresh=False,
         skip_dependency_check=False,
         submodule_commits=None,
+        extra_sync_dirs=None,
         **kwargs):
     """
     Serialize the stubbed method call and run the experiment using the
@@ -1155,6 +1202,13 @@ def run_experiment_lite(
             to be active on the backend. Each ref is resolved locally via
             git rev-parse to a full 40-char SHA. Worktrees are created on the
             remote host and removed after the job exits.
+        extra_sync_dirs: List of directories to rsync to remote before job submission.
+            Each entry is either absolute or relative to the project root. Relative
+            paths map to the same relative path under remote_dir. Absolute paths are
+            used as-is on the remote, except that /home/<local_user>/ is substituted
+            with /home/<remote_user>/ when the users differ. These syncs bypass
+            rsync_exclude entirely. Any rsync failure aborts the launcher. No-op in
+            local mode.
         **kwargs: Additional parameters passed to the python script.
     """
     # Fix mutable defaults
@@ -1391,6 +1445,17 @@ def run_experiment_lite(
             project_path=project_path,
             rsync_include=cfg.get("rsync_include", []),
             rsync_exclude=rsync_exclude,
+        )
+
+    # ----------------------------------------------------------------
+    # 9. Rsync extra dirs (fail-fast; first variant only, remote only)
+    # ----------------------------------------------------------------
+    if is_remote and first_variant and not dry and extra_sync_dirs:
+        rsync_extra_dirs(
+            remote_host=backend_config.host,
+            remote_dir=backend_config.remote_dir,
+            project_path=project_path,
+            extra_sync_dirs=extra_sync_dirs,
         )
 
     # ----------------------------------------------------------------
