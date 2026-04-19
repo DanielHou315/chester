@@ -301,3 +301,85 @@ def check_job_status(job: dict) -> str:
         return 'running'
 
 
+def monitor_jobs(
+    job_ids: list,
+    job_store_dir,
+    poll_interval: int = 60,
+    bare: bool = False,
+) -> None:
+    """Block until all listed jobs reach a terminal state (done or failed).
+
+    Polls every ``poll_interval`` seconds. Pulls results for completed jobs
+    as they finish, identical to ``cmd_pull_remote``.
+
+    Args:
+        job_ids: List of job_id strings to monitor (from write_job_file).
+        job_store_dir: Path to the job store directory.
+        poll_interval: Seconds between status polls (default 60).
+        bare: If True, exclude large files when pulling results.
+    """
+    from chester.job_store import (
+        load_pending_jobs,
+        delete_job_file,
+        mark_job_failed,
+    )
+
+    job_store_dir = Path(job_store_dir)
+    pending_ids = set(job_ids)
+    total = len(pending_ids)
+
+    print(f"[chester] Monitoring {total} remote job(s). Poll interval: {poll_interval}s. "
+          "Press Ctrl+C to stop monitoring (jobs will keep running).")
+
+    while pending_ids:
+        all_jobs = load_pending_jobs(job_store_dir)
+        jobs_by_id = {j["job_id"]: j for j in all_jobs}
+
+        done_count = 0
+        failed_count = 0
+        running_count = 0
+
+        for jid in list(pending_ids):
+            job = jobs_by_id.get(jid)
+            if job is None:
+                # Job file was deleted externally — treat as done.
+                pending_ids.discard(jid)
+                done_count += 1
+                continue
+
+            status = check_job_status(job)
+            exp_name = job.get("exp_name", jid)
+
+            if status in ("done", "done_orphans"):
+                result = execute_pull_for_job(job, bare=bare)
+                if result in ("pulled", "pull_failed"):
+                    delete_job_file(job_store_dir, jid)
+                    pending_ids.discard(jid)
+                    done_count += 1
+                elif result == "failed":
+                    mark_job_failed(job_store_dir, jid)
+                    pending_ids.discard(jid)
+                    failed_count += 1
+                else:
+                    running_count += 1
+            elif status == "failed":
+                print(f"[chester] Job FAILED: {exp_name}")
+                mark_job_failed(job_store_dir, jid)
+                pending_ids.discard(jid)
+                failed_count += 1
+            else:
+                running_count += 1
+
+        finished = total - len(pending_ids)
+        print(
+            f"[chester] Status: {finished}/{total} finished "
+            f"({done_count} done, {failed_count} failed, "
+            f"{len(pending_ids)} pending)."
+        )
+
+        if not pending_ids:
+            break
+
+        time.sleep(poll_interval)
+
+    print(f"[chester] All {total} job(s) reached terminal state.")
