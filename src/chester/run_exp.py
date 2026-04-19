@@ -1067,7 +1067,7 @@ exp_count = -2
 sub_process_popens = []
 # Module-level registry: (exp_prefix, seq_identity) -> slurm_job_id
 _slurm_job_registry: dict = {}
-# Job IDs registered in the current launcher session (for wait_remote).
+# Job IDs registered in the current launcher session (for wait_processes).
 _session_job_ids: list = []
 # Cached SSH backends for batch mode (keyed by mode name)
 _ssh_batch_backends: dict = {}
@@ -1144,7 +1144,7 @@ def run_experiment_lite(
         pre_commands=None,
         print_command=True,
         launch_with_subprocess=True,
-        wait_subprocess=True,
+        wait_processes=False,
         max_num_processes=10,
         use_singularity=None,
         slurm_overrides=None,
@@ -1157,7 +1157,6 @@ def run_experiment_lite(
         confirm=False,
         fresh=False,
         skip_dependency_check=False,
-        wait_remote=False,
         bare=False,
         submodule_commits=None,
         extra_sync_dirs=None,
@@ -1188,7 +1187,10 @@ def run_experiment_lite(
         pre_commands: Pre-execution commands.
         print_command: Print the generated command/script.
         launch_with_subprocess: Launch via subprocess (local only).
-        wait_subprocess: Wait for subprocess to complete (local only).
+        wait_processes: If True, block until all submitted jobs finish. For
+            local backends, waits for the subprocess; for remote backends
+            (SLURM/SSH), polls until all jobs reach terminal state. Requires
+            auto_pull=True for remote. No-op when auto_pull=False or dry=True.
         max_num_processes: Max concurrent local processes.
         use_singularity: Override singularity setting (None=use backend default).
         slurm_overrides: Dict of per-experiment SLURM parameter overrides.
@@ -1203,11 +1205,8 @@ def run_experiment_lite(
                always prompts for confirmation regardless of confirm flag.
         skip_dependency_check: If True, skip SLURM job dependency enforcement
             (useful for local debug runs without a real SLURM scheduler).
-        wait_remote: If True, block until all submitted remote jobs reach a
-            terminal state (done or failed). Requires auto_pull=True.
-            No-op when auto_pull=False or dry=True.
-        bare: If True and wait_remote=True, exclude large files (*.pth, *.pkl,
-            etc.) when pulling results for completed jobs.
+        bare: If True and wait_processes=True (remote), exclude large files
+            (*.pth, *.pkl, etc.) when pulling results for completed jobs.
         submodule_commits: Optional dict of {submodule_path: git_ref} to pin
             specific submodule commits at submission time. Requires singularity
             to be active on the backend. Each ref is resolved locally via
@@ -1459,8 +1458,8 @@ def run_experiment_lite(
             rsync_exclude=rsync_exclude,
         )
 
-    if wait_remote and not auto_pull:
-        print("[chester] Warning: wait_remote=True has no effect when auto_pull=False.")
+    if wait_processes and not auto_pull:
+        print("[chester] Warning: wait_processes=True has no effect when auto_pull=False (remote only).")
 
     # ----------------------------------------------------------------
     # 9. Rsync extra dirs (fail-fast; first variant only, remote only)
@@ -1542,7 +1541,7 @@ def run_experiment_lite(
             if use_subprocess:
                 try:
                     run_env = dict(os.environ, **(merged_env or {}))
-                    if wait_subprocess:
+                    if wait_processes:
                         subprocess.call(command, shell=True, env=run_env,
                                         executable="/bin/bash")
                         popen_obj = None
@@ -1654,7 +1653,7 @@ def run_experiment_lite(
                     submodule_worktrees=submodule_worktrees or None,
                 )
 
-    if wait_remote and last_variant and _session_job_ids and not dry:
+    if wait_processes and last_variant and _session_job_ids and not dry:
         from chester.auto_pull import monitor_jobs
         monitor_jobs(
             list(_session_job_ids),
