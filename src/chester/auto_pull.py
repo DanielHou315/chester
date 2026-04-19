@@ -331,38 +331,45 @@ def monitor_jobs(
     print(f"[chester] Monitoring {total} remote job(s). Poll interval: {poll_interval}s. "
           "Press Ctrl+C to stop monitoring (jobs will keep running).")
 
-    while pending_ids:
-        all_jobs = load_pending_jobs(job_store_dir)
-        jobs_by_id = {j["job_id"]: j for j in all_jobs}
+    try:
+        while pending_ids:
+            all_jobs = load_pending_jobs(job_store_dir)
+            jobs_by_id = {j["job_id"]: j for j in all_jobs}
 
-        for jid in list(pending_ids):
-            job = jobs_by_id.get(jid)
-            if job is None:
-                # Job file was deleted externally — treat as done.
-                pending_ids.discard(jid)
-                continue
+            for jid in list(pending_ids):
+                job = jobs_by_id.get(jid)
+                if job is None:
+                    # Job file was deleted externally — treat as done.
+                    pending_ids.discard(jid)
+                    continue
 
-            exp_name = job.get("exp_name", jid)
-            result = execute_pull_for_job(job, bare=bare)
-            if result == "pulled":
-                delete_job_file(job_store_dir, jid)
-                pending_ids.discard(jid)
-            elif result == "failed":
-                print(f"[chester] Job FAILED: {exp_name}")
-                mark_job_failed(job_store_dir, jid)
-                pending_ids.discard(jid)
-            else:  # "running" or "pull_failed"
-                pass
+                exp_name = job.get("exp_name", jid)
+                result = execute_pull_for_job(job, bare=bare)
+                if result == "pulled":
+                    delete_job_file(job_store_dir, jid)
+                    pending_ids.discard(jid)
+                elif result == "failed":
+                    print(f"[chester] Job FAILED: {exp_name}")
+                    mark_job_failed(job_store_dir, jid)
+                    pending_ids.discard(jid)
+                else:  # "running" or "pull_failed"
+                    pass
 
-        finished = total - len(pending_ids)
-        print(
-            f"[chester] Status: {finished}/{total} finished, "
-            f"{len(pending_ids)} still running."
-        )
+            finished = total - len(pending_ids)
+            print(
+                f"[chester] Status: {finished}/{total} finished, "
+                f"{len(pending_ids)} still running."
+            )
 
-        if not pending_ids:
-            break
+            if not pending_ids:
+                break
 
-        time.sleep(poll_interval)
+            time.sleep(poll_interval)
+
+    except KeyboardInterrupt:
+        n = len(pending_ids)
+        print(f"\n[chester] Monitoring stopped. {n} remote job{'s' if n != 1 else ''} still running on remote.")
+        print("[chester] Run `chester pull` later to check status and pull results.")
+        return
 
     print(f"[chester] All {total} job(s) reached terminal state.")

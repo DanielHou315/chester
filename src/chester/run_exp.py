@@ -1,9 +1,10 @@
+import atexit
 import os
 from pathlib import Path
 import subprocess
 import base64
 import os.path as osp
-import pickle as pickle
+import pickle as pickle  # noqa: S403 - cloudpickle is used for experiment serialization
 import cloudpickle
 import numpy as np
 import inspect
@@ -273,6 +274,39 @@ def _build_worktree_paths(
     return result
 
 
+_atexit_registered = False
+
+
+def _cleanup_subprocesses():
+    """Terminate all tracked local subprocesses (SIGTERM then SIGKILL)."""
+    running = [p for p in sub_process_popens if p.poll() is None]
+    if not running:
+        return
+    print(f"\n[chester] Terminating {len(running)} local subprocess(es)...")
+    for p in running:
+        try:
+            p.terminate()
+        except OSError:
+            pass
+    deadline = time.time() + 5.0
+    for p in running:
+        remaining = max(0.0, deadline - time.time())
+        try:
+            p.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            try:
+                p.kill()
+            except OSError:
+                pass
+
+
+def _ensure_cleanup_registered():
+    global _atexit_registered
+    if not _atexit_registered:
+        atexit.register(_cleanup_subprocesses)
+        _atexit_registered = True
+
+
 def monitor_processes(active_processes, max_processes=2, sleep_time=1):
     """
     Monitor the number of running processes and wait if maximum is reached.
@@ -285,10 +319,17 @@ def monitor_processes(active_processes, max_processes=2, sleep_time=1):
     Returns:
         Updated list with only running processes
     """
-    # Wait if we've reached the maximum number of processes
     while len(active_processes) >= max_processes:
-        time.sleep(sleep_time)
-        # Update the list of active processes
+        try:
+            time.sleep(sleep_time)
+        except KeyboardInterrupt:
+            for p in active_processes:
+                if p.poll() is None:
+                    try:
+                        p.terminate()
+                    except OSError:
+                        pass
+            raise
         active_processes = [p for p in active_processes if p.poll() is None]
 
     return active_processes
@@ -1539,20 +1580,25 @@ def run_experiment_lite(
             # hydra execution cannot run inside a container.
             use_subprocess = launch_with_subprocess or backend.config.singularity
             if use_subprocess:
-                try:
-                    run_env = dict(os.environ, **(merged_env or {}))
-                    if wait_processes:
+                run_env = dict(os.environ, **(merged_env or {}))
+                if wait_processes:
+                    try:
                         subprocess.call(command, shell=True, env=run_env,
                                         executable="/bin/bash")
-                        popen_obj = None
-                    else:
+                    except KeyboardInterrupt:
+                        _cleanup_subprocesses()
+                        raise
+                    popen_obj = None
+                else:
+                    try:
                         popen_obj = subprocess.Popen(command, shell=True, env=run_env,
                                                      executable="/bin/bash")
+                    except Exception as e:
+                        print(e)
+                        popen_obj = None
+                    else:
                         sub_process_popens.append(popen_obj)
-                except Exception as e:
-                    print(e)
-                    if isinstance(e, KeyboardInterrupt):
-                        raise
+                        _ensure_cleanup_registered()
             else:
                 # For hydra debug mode (in-process, no singularity)
                 from .hydra_utils import run_hydra_command
