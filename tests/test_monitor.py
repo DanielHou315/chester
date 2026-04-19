@@ -1,8 +1,5 @@
 # third_party/chester/tests/test_monitor.py
-import json
-import time
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -31,9 +28,8 @@ def test_monitor_jobs_returns_when_all_done(tmp_path):
     job_id = _make_job(tmp_path)
 
     with patch("chester.auto_pull.execute_pull_for_job", return_value="pulled") as mock_pull, \
-         patch("chester.auto_pull.check_job_status", return_value="done"), \
          patch("chester.job_store.delete_job_file") as mock_del, \
-         patch("time.sleep"):
+         patch("chester.auto_pull.time.sleep"):
         monitor_jobs([job_id], tmp_path, poll_interval=0)
 
     mock_pull.assert_called_once()
@@ -41,18 +37,17 @@ def test_monitor_jobs_returns_when_all_done(tmp_path):
 
 
 def test_monitor_jobs_stays_pending_while_running(tmp_path):
-    """monitor_jobs() keeps looping while jobs are 'running'."""
+    """monitor_jobs() keeps looping while execute_pull_for_job returns 'running'."""
     job_id = _make_job(tmp_path)
     call_count = {"n": 0}
 
-    def fake_status(job):
+    def fake_execute(job, bare=False):
         call_count["n"] += 1
-        return "done" if call_count["n"] >= 3 else "running"
+        return "pulled" if call_count["n"] >= 3 else "running"
 
-    with patch("chester.auto_pull.execute_pull_for_job", return_value="pulled"), \
-         patch("chester.auto_pull.check_job_status", side_effect=fake_status), \
+    with patch("chester.auto_pull.execute_pull_for_job", side_effect=fake_execute), \
          patch("chester.job_store.delete_job_file"), \
-         patch("time.sleep"):
+         patch("chester.auto_pull.time.sleep"):
         monitor_jobs([job_id], tmp_path, poll_interval=0)
 
     assert call_count["n"] == 3
@@ -62,10 +57,61 @@ def test_monitor_jobs_handles_failed(tmp_path):
     """monitor_jobs() treats 'failed' as terminal — does not hang."""
     job_id = _make_job(tmp_path)
 
-    with patch("chester.auto_pull.execute_pull_for_job", return_value="failed") as mock_pull, \
-         patch("chester.auto_pull.check_job_status", return_value="failed"), \
+    with patch("chester.auto_pull.execute_pull_for_job", return_value="failed"), \
          patch("chester.job_store.mark_job_failed") as mock_fail, \
-         patch("time.sleep"):
+         patch("chester.auto_pull.time.sleep"):
         monitor_jobs([job_id], tmp_path, poll_interval=0)
 
     mock_fail.assert_called_once_with(tmp_path, job_id)
+
+
+def test_monitor_jobs_handles_done_orphans(tmp_path):
+    """execute_pull_for_job returning 'pulled' (from done_orphans) terminates correctly."""
+    job_id = _make_job(tmp_path)
+
+    with patch("chester.auto_pull.execute_pull_for_job", return_value="pulled") as mock_pull, \
+         patch("chester.job_store.delete_job_file") as mock_del, \
+         patch("chester.auto_pull.time.sleep"):
+        monitor_jobs([job_id], tmp_path, poll_interval=0)
+
+    mock_pull.assert_called_once()
+    mock_del.assert_called_once_with(tmp_path, job_id)
+
+
+def test_cli_monitor_no_jobs(tmp_path, capsys):
+    """cmd_monitor exits cleanly when no pending jobs match prefix."""
+    from chester.cli import cmd_monitor
+
+    cmd_monitor(job_store_dir=tmp_path, prefix="nonexistent", poll_interval=0, bare=False)
+    captured = capsys.readouterr()
+    assert "No pending jobs" in captured.out
+
+
+def test_cli_monitor_exits_when_all_done(tmp_path, capsys):
+    """cmd_monitor exits after all matching jobs finish."""
+    _make_job(tmp_path, exp_name="my_exp_1")
+
+    with patch("chester.auto_pull.execute_pull_for_job", return_value="pulled"), \
+         patch("chester.job_store.delete_job_file"), \
+         patch("chester.auto_pull.time.sleep"):
+        from chester.cli import cmd_monitor
+        cmd_monitor(job_store_dir=tmp_path, prefix="test", poll_interval=0, bare=False)
+
+    out = capsys.readouterr().out
+    assert "All 1 job(s) reached terminal state" in out
+
+
+def test_cli_monitor_no_prefix_monitors_all(tmp_path, capsys):
+    """cmd_monitor with prefix=None monitors all pending jobs."""
+    _make_job(tmp_path, exp_name="job_a")
+    _make_job(tmp_path, exp_name="job_b")
+
+    with patch("chester.auto_pull.execute_pull_for_job", return_value="pulled"), \
+         patch("chester.job_store.delete_job_file"), \
+         patch("chester.auto_pull.time.sleep"):
+        from chester.cli import cmd_monitor
+        cmd_monitor(job_store_dir=tmp_path, prefix=None, poll_interval=0, bare=False)
+
+    out = capsys.readouterr().out
+    assert "Monitoring 2 remote job(s)" in out
+    assert "All 2 job(s) reached terminal state" in out

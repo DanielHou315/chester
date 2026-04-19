@@ -196,6 +196,8 @@ def _register_job_for_pull(
         job['submodule_worktrees'] = submodule_worktrees
     job_id = write_job_file(job_store_dir, job)
     print(f'[chester] Registered job for pull: {exp_name} -> {job_store_dir}/{job_id}.json')
+    _session_job_ids.append(job_id)
+    return job_id
 
 
 def _validate_submodule_commits(
@@ -1065,6 +1067,8 @@ exp_count = -2
 sub_process_popens = []
 # Module-level registry: (exp_prefix, seq_identity) -> slurm_job_id
 _slurm_job_registry: dict = {}
+# Job IDs registered in the current launcher session (for wait_remote).
+_session_job_ids: list = []
 # Cached SSH backends for batch mode (keyed by mode name)
 _ssh_batch_backends: dict = {}
 now = datetime.datetime.now(dateutil.tz.tzlocal())
@@ -1153,6 +1157,8 @@ def run_experiment_lite(
         confirm=False,
         fresh=False,
         skip_dependency_check=False,
+        wait_remote=False,
+        bare=False,
         submodule_commits=None,
         extra_sync_dirs=None,
         **kwargs):
@@ -1197,6 +1203,11 @@ def run_experiment_lite(
                always prompts for confirmation regardless of confirm flag.
         skip_dependency_check: If True, skip SLURM job dependency enforcement
             (useful for local debug runs without a real SLURM scheduler).
+        wait_remote: If True, block until all submitted remote jobs reach a
+            terminal state (done or failed). Requires auto_pull=True.
+            No-op when auto_pull=False or dry=True.
+        bare: If True and wait_remote=True, exclude large files (*.pth, *.pkl,
+            etc.) when pulling results for completed jobs.
         submodule_commits: Optional dict of {submodule_path: git_ref} to pin
             specific submodule commits at submission time. Requires singularity
             to be active on the backend. Each ref is resolved locally via
@@ -1299,6 +1310,7 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     if first_variant:
         _slurm_job_registry.clear()
+        _session_job_ids.clear()
 
     # ----------------------------------------------------------------
     # 4.2. Dependency check (non-SLURM guard for order="dependent")
@@ -1446,6 +1458,9 @@ def run_experiment_lite(
             rsync_include=cfg.get("rsync_include", []),
             rsync_exclude=rsync_exclude,
         )
+
+    if wait_remote and not auto_pull:
+        print("[chester] Warning: wait_remote=True has no effect when auto_pull=False.")
 
     # ----------------------------------------------------------------
     # 9. Rsync extra dirs (fail-fast; first variant only, remote only)
@@ -1639,3 +1654,11 @@ def run_experiment_lite(
                     submodule_worktrees=submodule_worktrees or None,
                 )
 
+    if wait_remote and last_variant and _session_job_ids and not dry:
+        from chester.auto_pull import monitor_jobs
+        monitor_jobs(
+            list(_session_job_ids),
+            get_default_job_store_dir(),
+            poll_interval=60,
+            bare=bare,
+        )
