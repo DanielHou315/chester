@@ -1588,12 +1588,12 @@ def run_experiment_lite(
                     submodule_commits=resolved_commits or None,
                     submodule_worktrees=submodule_worktrees or None,
                 )
-                if wait_remote and last_variant and _session_job_ids:
-                    from chester.auto_pull import monitor_jobs
-                    monitor_jobs(
-                        list(_session_job_ids),
-                        get_default_job_store_dir(),
-                        poll_interval=60,
-                        bare=bare,
-                    )
 
+    if wait_remote and last_variant and _session_job_ids and not dry:
+        from chester.auto_pull import monitor_jobs
+        monitor_jobs(
+            list(_session_job_ids),
+            get_default_job_store_dir(),
+            poll_interval=60,
+            bare=bare,
+        )

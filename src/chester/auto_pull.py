@@ -335,15 +335,11 @@ def monitor_jobs(
         all_jobs = load_pending_jobs(job_store_dir)
         jobs_by_id = {j["job_id"]: j for j in all_jobs}
 
-        done_count = 0
-        failed_count = 0
-
         for jid in list(pending_ids):
             job = jobs_by_id.get(jid)
             if job is None:
                 # Job file was deleted externally — treat as done.
                 pending_ids.discard(jid)
-                done_count += 1
                 continue
 
             exp_name = job.get("exp_name", jid)
@@ -351,19 +347,17 @@ def monitor_jobs(
             if result == "pulled":
                 delete_job_file(job_store_dir, jid)
                 pending_ids.discard(jid)
-                done_count += 1
             elif result == "failed":
                 print(f"[chester] Job FAILED: {exp_name}")
                 mark_job_failed(job_store_dir, jid)
                 pending_ids.discard(jid)
-                failed_count += 1
             else:  # "running" or "pull_failed"
                 pass
 
         finished = total - len(pending_ids)
         print(
-            f"[chester] Status: {finished}/{total} finished "
-            f"({done_count} done, {failed_count} failed, {len(pending_ids)} still running)."
+            f"[chester] Status: {finished}/{total} finished, "
+            f"{len(pending_ids)} still running."
         )
 
         if not pending_ids:
