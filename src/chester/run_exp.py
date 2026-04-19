@@ -1112,6 +1112,7 @@ def run_experiment_lite(
         fresh=False,
         skip_dependency_check=False,
         wait_remote=False,
+        bare=False,
         submodule_commits=None,
         **kwargs):
     """
@@ -1155,6 +1156,11 @@ def run_experiment_lite(
                always prompts for confirmation regardless of confirm flag.
         skip_dependency_check: If True, skip SLURM job dependency enforcement
             (useful for local debug runs without a real SLURM scheduler).
+        wait_remote: If True, block until all submitted remote jobs reach a
+            terminal state (done or failed). Requires auto_pull=True.
+            No-op when auto_pull=False or dry=True.
+        bare: If True and wait_remote=True, exclude large files (*.pth, *.pkl,
+            etc.) when pulling results for completed jobs.
         submodule_commits: Optional dict of {submodule_path: git_ref} to pin
             specific submodule commits at submission time. Requires singularity
             to be active on the backend. Each ref is resolved locally via
@@ -1399,6 +1405,9 @@ def run_experiment_lite(
             rsync_exclude=rsync_exclude,
         )
 
+    if wait_remote and not auto_pull:
+        print("[chester] Warning: wait_remote=True has no effect when auto_pull=False.")
+
     # ----------------------------------------------------------------
     # 10. Generate script and submit via backend
     # ----------------------------------------------------------------
@@ -1579,11 +1588,12 @@ def run_experiment_lite(
                     submodule_commits=resolved_commits or None,
                     submodule_worktrees=submodule_worktrees or None,
                 )
-                if wait_remote and last_variant and not dry and _session_job_ids:
+                if wait_remote and last_variant and _session_job_ids:
                     from chester.auto_pull import monitor_jobs
                     monitor_jobs(
                         list(_session_job_ids),
                         get_default_job_store_dir(),
                         poll_interval=60,
+                        bare=bare,
                     )
 
