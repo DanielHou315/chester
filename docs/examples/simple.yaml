@@ -1,0 +1,52 @@
+# Chester config: minimal local + SSH + SLURM setup
+# This is a starting point for multi-backend experiments.
+
+log_dir: data
+package_manager: uv
+
+# Files to sync to remote backends (SSH/SLURM)
+rsync_include:
+  - src/
+  - configs/
+  - "*.py"
+
+rsync_exclude:
+  - data/
+  - "*.pyc"
+  - __pycache__/
+  - .venv/
+  - wandb/
+
+backends:
+  # Local backend: run jobs on your machine
+  local:
+    type: local
+    prepare: .chester/backends/local/prepare.sh
+
+  # SSH backend: run jobs on a remote server
+  # Define the SSH host in ~/.ssh/config
+  myserver:
+    type: ssh
+    host: myserver
+    remote_dir: /home/user/myproject
+    prepare: .chester/backends/myserver/prepare.sh
+
+  # SLURM backend: submit jobs to a cluster
+  mycluster:
+    type: slurm
+    host: mycluster
+    remote_dir: /home/user/myproject
+    prepare: .chester/backends/mycluster/prepare.sh
+    # Load singularity module on the cluster
+    modules: [singularity]
+    # Load CUDA module for GPU support
+    cuda_module: cuda/12.1
+    # SLURM job configuration
+    slurm:
+      partition: gpu
+      time: "24:00:00"
+      nodes: 1
+      gpus: 1
+      cpus_per_gpu: 8
+      mem_per_gpu: 32G
+      email_end: you@university.edu

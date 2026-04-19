@@ -1,0 +1,104 @@
+# Chester config: SLURM + Singularity production setup
+# Modeled on real university HPC clusters running Isaac Sim and similar GPU apps.
+
+log_dir: data
+package_manager: uv
+hydra_config_path: configs
+
+# Files to sync to remote backends
+rsync_include:
+  - src/
+  - configs/
+  - launchers/
+  - main.py
+  - .git/
+  - .git/modules/
+
+rsync_exclude:
+  - data/
+  - "*.pyc"
+  - __pycache__/
+  - .venv/
+  - wandb/
+  - raw_datasets/
+  - .worktrees/
+
+# Global singularity defaults inherited by all backends
+# Set enabled: false so singularity is opt-in unless overridden per-backend
+singularity:
+  image: .containers/base.sif
+  workdir: /workspace
+  gpu: true
+  enabled: false
+  prepare: .chester/backends/singularity/prepare.sh
+  mounts:
+    - src:/workspace/src
+    - configs:/workspace/configs
+    - data:/workspace/data
+
+backends:
+  # Local backend: inherit global singularity (opt-in with --singularity flag)
+  local:
+    type: local
+    prepare: .chester/backends/local/prepare.sh
+
+  # SSH backend: personal server with optional singularity
+  myserver:
+    type: ssh
+    host: myserver
+    remote_dir: /home/user/myproject
+    prepare: .chester/backends/myserver/prepare.sh
+    # Batch jobs: queue up to 2 at a time (one per GPU)
+    batch_gpu: 2
+    singularity:
+      enabled: true
+      image: .containers/base.sif
+      gpu: true
+      workdir: /workspace
+      mounts:
+        - src:/workspace/src
+        - configs:/workspace/configs
+        - data:/workspace/data
+        - raw_datasets:/workspace/raw_datasets
+        - ~/.cache/myapp:/opt/myapp/cache
+
+  # SLURM backend: university HPC cluster with singularity
+  mycluster:
+    type: slurm
+    host: mycluster
+    remote_dir: /home/user/myproject
+    prepare: .chester/backends/mycluster/prepare.sh
+    # Load these modules before running the job
+    modules: [singularity, gcc/14.1.0]
+    cuda_module: cuda/12.8.1
+    # SLURM configuration
+    slurm:
+      partition: spgpu
+      time: "72:00:00"
+      nodes: 1
+      gpus: 1
+      cpus_per_gpu: 8
+      mem_per_gpu: 64G
+      email_end: you@university.edu
+      extra_directives:
+        - "--account=mylab"
+    # Override singularity config for this backend: always enabled, no fakeroot
+    singularity:
+      enabled: true           # always use singularity on this backend
+      image: .containers/base.sif
+      gpu: true
+      fakeroot: false         # Great Lakes does not allow fakeroot
+      writable_tmpfs: true    # ephemeral overlay for app writes
+      pid_namespace: true     # kill all container processes on job exit
+      workdir: /workspace
+      mounts:
+        # GPU and display libraries
+        - /usr/share/glvnd
+        # Project code (synced from rsynced remote_dir)
+        - src:/workspace/src
+        - configs:/workspace/configs
+        - data:/workspace/data
+        # Shared datasets on NFS
+        - /nfs/shared/datasets:/workspace/raw_datasets
+        # Application cache on shared NFS (persists across jobs)
+        - /nfs/shared/myapp-cache:/opt/myapp/cache

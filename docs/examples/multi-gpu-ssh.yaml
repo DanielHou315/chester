@@ -1,0 +1,41 @@
+# Chester config: multi-GPU SSH workstation with Singularity
+# For running parallel jobs on a personal workstation with multiple GPUs.
+
+log_dir: data
+package_manager: uv
+
+rsync_include:
+  - src/
+  - configs/
+  - "*.py"
+
+rsync_exclude:
+  - data/
+  - .venv/
+
+backends:
+  # Local backend for development
+  local:
+    type: local
+    prepare: .chester/backends/local/prepare.sh
+
+  # SSH workstation backend: run parallel jobs (one per GPU)
+  workstation:
+    type: ssh
+    host: workstation            # SSH alias from ~/.ssh/config
+    remote_dir: /home/user/myproject
+    prepare: .chester/backends/workstation/prepare.sh
+    # Run up to 4 jobs in parallel (one per GPU)
+    # Chester automatically sets CUDA_VISIBLE_DEVICES for each job
+    batch_gpu: 4
+    # Optional: explicitly pin GPU device IDs
+    # cuda_visible_devices: "0,1,2,3"
+    singularity:
+      enabled: true
+      image: .containers/myimage.sif
+      gpu: true
+      workdir: /workspace
+      mounts:
+        - src:/workspace/src
+        - data:/workspace/data
+        - raw_datasets:/workspace/raw_datasets
