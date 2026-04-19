@@ -53,7 +53,7 @@ class SlurmBackend(Backend):
         4. ``cd {remote_dir}``
         5. ``cd {remote_dir}``
         6. ``module load`` for each module and cuda_module
-        7. Inner commands (prepare.sh + python + .done marker), optionally
+        7. Inner commands (prepare.sh + python), optionally
            wrapped with singularity
 
         For ``serial_steps``, multiple python commands are generated in the
@@ -62,7 +62,7 @@ class SlurmBackend(Backend):
 
         Args:
             task: Task dict with ``params`` sub-dict.  ``params`` must contain
-                  ``log_dir`` for SBATCH output directives and ``.done`` marker.
+                  ``log_dir`` for SBATCH output directives.
             script: Python script to run.
             python_command: Base python command (default ``python``; for SLURM
                   this is often ``srun python``).
@@ -170,9 +170,6 @@ class SlurmBackend(Backend):
                 lines.append(self.wrap_with_singularity(inner, mounts_override=rewritten_mounts))
             else:
                 lines.append(command)
-
-        # .done marker — always on host, after container exits
-        lines.append(f"touch {log_dir}/.done")
 
         return "\n".join(lines) + "\n"
 

@@ -135,8 +135,6 @@ def test_end_to_end_slurm_script_generation(tmp_path):
     assert "uv run python" not in script
     assert "python train.py" in script
 
-    # Verify .done marker
-    assert "touch /remote/project/data/exp1/.done" in script
 
 
 def test_end_to_end_ssh_script_generation(tmp_path):
@@ -173,7 +171,6 @@ def test_end_to_end_ssh_script_generation(tmp_path):
     assert "uv run python" in script
     assert "train.py" in script
     assert "--batch_size 32" in script
-    assert "touch /home/user/project/data/exp1/.done" in script
 
 
 def test_end_to_end_slurm_with_overrides(tmp_path):
@@ -452,7 +449,6 @@ def test_singularity_wrapping_in_slurm(tmp_path):
     assert "-B /scratch" in script
     assert "--nv" in script
     assert "/opt/container.sif" in script
-    # Inner commands (prepare, python, done) should be inside singularity
+    # Inner commands (prepare, python) should be inside singularity
     assert "source /remote/project/setup.sh" in script
     assert "train.py" in script
-    assert ".done" in script

@@ -38,9 +38,6 @@ wandb = ["wandb"]
 all = ["boto3", "awscli", "wandb", "tensorboard"]
 dev = ["pytest", "pytest-cov"]
 
-[project.scripts]
-chester = "chester.cli:main"
-
 [tool.setuptools.packages.find]
 where = ["src"]
 

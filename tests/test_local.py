@@ -209,7 +209,6 @@ def test_ssh_command_generation():
 
     assert 'cd /home/user/project' in full_cmd, "Missing cd command"
     assert 'train.py' in full_cmd, "Missing script"
-    assert '.done' in full_cmd, "Missing .done marker creation"
 
     print("PASSED\n")
 

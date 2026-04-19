@@ -102,7 +102,6 @@ class SSHBackend(Backend):
         3. ``cd {remote_dir}``
         4. Source prepare.sh if configured
         5. Python command with params (wrapped for package manager)
-        6. ``touch {log_dir}/.done`` marker on success
 
         For singularity mode the inner commands (prepare + python) are
         wrapped with ``singularity exec``.
@@ -113,7 +112,7 @@ class SSHBackend(Backend):
 
         Args:
             task: Task dict with ``params`` sub-dict. ``params`` must contain
-                  ``log_dir`` for the ``.done`` marker.
+                  ``log_dir`` for the output log path.
             script: Python script to run.
             python_command: Base python command.
             env: Optional env vars to prepend.
@@ -191,9 +190,6 @@ class SSHBackend(Backend):
             else:
                 lines.append(command)
 
-        # .done marker — always on host, after container exits
-        lines.append(f"touch {log_dir}/.done")
-
         return "\n".join(lines) + "\n"
 
     # ------------------------------------------------------------------
@@ -205,14 +201,13 @@ class SSHBackend(Backend):
         task: Dict[str, Any],
         script_content: str,
         dry: bool = False,
-    ) -> Optional[int]:
+    ) -> None:
         """Submit a task for execution on a remote host via SSH.
 
         In normal mode (no batch_gpu), submits immediately:
         1. Create remote log dir via ``ssh host mkdir -p {log_dir}``
         2. Copy script to remote via ``scp``
         3. Execute via ``ssh host nohup bash script > output 2>&1 &``
-        4. Save PID to ``.chester_pid``
 
         In batch mode (batch_gpu set), accumulates the script instead.
         Call :meth:`flush_batch` after all variants are submitted.
@@ -223,7 +218,7 @@ class SSHBackend(Backend):
             dry: If True, do nothing and return None.
 
         Returns:
-            Remote PID for single-submit mode, or None for batch/dry mode.
+            None.
         """
         if self.config.batch_gpu:
             if not dry:
@@ -237,7 +232,7 @@ class SSHBackend(Backend):
         task: Dict[str, Any],
         script_content: str,
         dry: bool = False,
-    ) -> Optional[int]:
+    ) -> None:
         if dry:
             return None
 
@@ -266,28 +261,13 @@ class SSHBackend(Backend):
                 check=True,
             )
 
-            # 4. Execute via nohup and capture PID
+            # 4. Execute via nohup
             q_script = shlex.quote(remote_script)
             q_log = shlex.quote(f"{log_dir}/output.log")
-            result = subprocess.run(
-                [
-                    "ssh", host,
-                    f"nohup bash {q_script} > {q_log} 2>&1 & echo $!",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            pid = int(result.stdout.strip())
-
-            # 5. Save PID to .chester_pid
-            q_pid_file = shlex.quote(f"{log_dir}/.chester_pid")
             subprocess.run(
-                ["ssh", host, f"echo {pid} > {q_pid_file}"],
+                ["ssh", host, f"nohup bash {q_script} > {q_log} 2>&1 &"],
                 check=True,
             )
-
-            return pid
         finally:
             os.unlink(local_script)
 

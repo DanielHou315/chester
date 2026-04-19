@@ -20,7 +20,6 @@ import secrets as _secrets
 from . import config
 from chester.config_v2 import load_config, get_backend
 from chester.backends import create_backend
-from chester.job_store import write_job_file, get_default_job_store_dir, JOB_STATUS_PENDING
 
 
 # Deprecated modes that are no longer supported
@@ -81,64 +80,6 @@ def _map_local_to_remote_log_dir(local_log_dir: str, mode: str) -> str:
     return remote_log_dir
 
 
-def _resolve_extra_pull_dirs(extra_pull_dirs: list, mode: str) -> list:
-    """
-    Resolve extra_pull_dirs to (local, remote) path pairs.
-
-    Relative paths are resolved against PROJECT_PATH (local) and REMOTE_DIR (remote).
-    Absolute paths (starting with '/') are used as-is on both local and remote.
-
-    Args:
-        extra_pull_dirs: List of directory paths (strings)
-        mode: Execution mode (e.g., 'armfranka', 'gl')
-
-    Returns:
-        List of dicts with 'local' and 'remote' keys
-    """
-    if not extra_pull_dirs:
-        return []
-
-    result = []
-    remote_dir = config.REMOTE_DIR.get(mode, '')
-
-    for path in extra_pull_dirs:
-        if os.path.isabs(path):
-            # Absolute path: same on both local and remote
-            result.append({'local': path, 'remote': path})
-        else:
-            # Relative path: resolve against project roots
-            local_path = os.path.join(config.PROJECT_PATH, path)
-            remote_path = os.path.join(remote_dir, path)
-            result.append({'local': local_path, 'remote': remote_path})
-
-    return result
-
-
-def _resolve_extra_pull_dirs_v2(extra_pull_dirs, project_path, remote_dir):
-    """Resolve extra_pull_dirs using the new config system (no old config module).
-
-    Args:
-        extra_pull_dirs: List of directory paths (strings)
-        project_path: Local project root path
-        remote_dir: Remote project root path
-
-    Returns:
-        List of dicts with 'local' and 'remote' keys
-    """
-    if not extra_pull_dirs:
-        return []
-
-    result = []
-    for path in extra_pull_dirs:
-        if os.path.isabs(path):
-            result.append({'local': path, 'remote': path})
-        else:
-            local_path = os.path.join(project_path, path)
-            remote_path = os.path.join(remote_dir, path)
-            result.append({'local': local_path, 'remote': remote_path})
-    return result
-
-
 def _map_local_to_remote_log_dir_v2(local_log_dir, project_path, remote_dir):
     """Map local log_dir to remote using the new config system.
 
@@ -165,40 +106,6 @@ def _map_local_to_remote_log_dir_v2(local_log_dir, project_path, remote_dir):
 
     relative_path = os.path.relpath(local_log_dir, project_path)
     return os.path.join(remote_dir, relative_path)
-
-
-def _register_job_for_pull(
-    host: str,
-    remote_log_dir: str,
-    local_log_dir: str,
-    exp_name: str,
-    exp_prefix: str,
-    extra_pull_dirs: list = None,
-    slurm_job_id: int = None,
-    submodule_commits: dict = None,
-    submodule_worktrees: dict = None,
-):
-    """Write a single job file to the persistent job store."""
-    job_store_dir = get_default_job_store_dir()
-    job = {
-        'host': host,
-        'remote_log_dir': remote_log_dir,
-        'local_log_dir': local_log_dir,
-        'exp_name': exp_name,
-        'exp_prefix': exp_prefix,
-        'extra_pull_dirs': extra_pull_dirs or [],
-        'status': JOB_STATUS_PENDING,
-    }
-    if slurm_job_id is not None:
-        job['slurm_job_id'] = slurm_job_id
-    if submodule_commits:
-        job['submodule_commits'] = submodule_commits
-    if submodule_worktrees:
-        job['submodule_worktrees'] = submodule_worktrees
-    job_id = write_job_file(job_store_dir, job)
-    print(f'[chester] Registered job for pull: {exp_name} -> {job_store_dir}/{job_id}.json')
-    _session_job_ids.append(job_id)
-    return job_id
 
 
 def _validate_submodule_commits(
@@ -1108,8 +1015,6 @@ exp_count = -2
 sub_process_popens = []
 # Module-level registry: (exp_prefix, seq_identity) -> slurm_job_id
 _slurm_job_registry: dict = {}
-# Job IDs registered in the current launcher session (for wait_processes).
-_session_job_ids: list = []
 # Cached SSH backends for batch mode (keyed by mode name)
 _ssh_batch_backends: dict = {}
 now = datetime.datetime.now(dateutil.tz.tzlocal())
@@ -1191,14 +1096,11 @@ def run_experiment_lite(
         slurm_overrides=None,
         hydra_enabled=False,
         hydra_flags=None,
-        auto_pull=True,
-        extra_pull_dirs=None,
         sync_env=None,
         git_snapshot=True,
         confirm=False,
         fresh=False,
         skip_dependency_check=False,
-        bare=False,
         submodule_commits=None,
         extra_sync_dirs=None,
         **kwargs):
@@ -1228,17 +1130,13 @@ def run_experiment_lite(
         pre_commands: Pre-execution commands.
         print_command: Print the generated command/script.
         launch_with_subprocess: Launch via subprocess (local only).
-        wait_processes: If True, block until all submitted jobs finish. For
-            local backends, waits for the subprocess; for remote backends
-            (SLURM/SSH), polls until all jobs reach terminal state. Requires
-            auto_pull=True for remote. No-op when auto_pull=False or dry=True.
+        wait_processes: If True, run each local subprocess synchronously
+            (sequential execution). No-op for remote backends.
         max_num_processes: Max concurrent local processes.
         use_singularity: Override singularity setting (None=use backend default).
         slurm_overrides: Dict of per-experiment SLURM parameter overrides.
         hydra_enabled: Use Hydra command line format.
         hydra_flags: Additional Hydra flags.
-        auto_pull: Enable automatic result pulling from remote.
-        extra_pull_dirs: Extra directories to pull from remote.
         sync_env: Override sync_on_launch config.
         git_snapshot: Save git state to log_dir before running (default True).
         confirm: If True, skip the remote execution confirmation prompt.
@@ -1246,8 +1144,6 @@ def run_experiment_lite(
                always prompts for confirmation regardless of confirm flag.
         skip_dependency_check: If True, skip SLURM job dependency enforcement
             (useful for local debug runs without a real SLURM scheduler).
-        bare: If True and wait_processes=True (remote), exclude large files
-            (*.pth, *.pkl, etc.) when pulling results for completed jobs.
         submodule_commits: Optional dict of {submodule_path: git_ref} to pin
             specific submodule commits at submission time. Requires singularity
             to be active on the backend. Each ref is resolved locally via
@@ -1350,7 +1246,6 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     if first_variant:
         _slurm_job_registry.clear()
-        _session_job_ids.clear()
 
     # ----------------------------------------------------------------
     # 4.2. Dependency check (non-SLURM guard for order="dependent")
@@ -1498,9 +1393,6 @@ def run_experiment_lite(
             rsync_include=cfg.get("rsync_include", []),
             rsync_exclude=rsync_exclude,
         )
-
-    if wait_processes and not auto_pull:
-        print("[chester] Warning: wait_processes=True has no effect when auto_pull=False (remote only).")
 
     # ----------------------------------------------------------------
     # 9. Rsync extra dirs (fail-fast; first variant only, remote only)
@@ -1681,29 +1573,3 @@ def run_experiment_lite(
                     # Register placeholder so dry-run validation doesn't warn
                     _slurm_job_registry[(exp_prefix, seq_identity)] = "dry"
 
-            # Register job in persistent job store
-            if auto_pull and not dry:
-                slurm_job_id = submit_result if backend_config.type == "slurm" else None
-                resolved_extra_pull_dirs = _resolve_extra_pull_dirs_v2(
-                    extra_pull_dirs, project_path, backend_config.remote_dir
-                )
-                _register_job_for_pull(
-                    host=backend_config.host,
-                    remote_log_dir=remote_log_dir,
-                    local_log_dir=local_log_dir,
-                    exp_name=task.get('exp_name', ''),
-                    exp_prefix=exp_prefix,
-                    extra_pull_dirs=resolved_extra_pull_dirs,
-                    slurm_job_id=slurm_job_id,
-                    submodule_commits=resolved_commits or None,
-                    submodule_worktrees=submodule_worktrees or None,
-                )
-
-    if wait_processes and last_variant and _session_job_ids and not dry:
-        from chester.auto_pull import monitor_jobs
-        monitor_jobs(
-            list(_session_job_ids),
-            get_default_job_store_dir(),
-            poll_interval=60,
-            bare=bare,
-        )

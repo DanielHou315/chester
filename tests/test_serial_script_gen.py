@@ -7,7 +7,6 @@ Covers:
   c. SLURM serial_steps with singularity wraps each step independently
   d. SSH serial_steps with singularity wraps each step independently
   e. No serial_steps generates a single python command
-  f. .done marker appears after all commands (last substantive line)
 """
 import base64
 import importlib
@@ -129,16 +128,6 @@ class TestSlurmSerialStepsMultipleCommands:
         ]
         assert len(python_lines) == 2
 
-    def test_exactly_one_done_marker(self):
-        backend = _make_slurm_backend()
-        task = _make_task()
-        script = backend.generate_script(
-            task, script=SCRIPT,
-            hydra_enabled=True,
-            serial_steps=SERIAL_STEPS,
-        )
-        assert script.count(".done") == 1
-
     def test_both_overrides_on_distinct_lines(self):
         """training and evaluate must appear in separate lines (not on same line)."""
         backend = _make_slurm_backend()
@@ -194,16 +183,6 @@ class TestSSHSerialStepsMultipleCommands:
             if SCRIPT in line and not line.strip().startswith("#")
         ]
         assert len(python_lines) == 2
-
-    def test_exactly_one_done_marker(self):
-        backend = _make_ssh_backend()
-        task = _make_task()
-        script = backend.generate_script(
-            task, script=SCRIPT,
-            hydra_enabled=True,
-            serial_steps=SERIAL_STEPS,
-        )
-        assert script.count(".done") == 1
 
     def test_both_overrides_on_distinct_lines(self):
         backend = _make_ssh_backend()
@@ -284,21 +263,6 @@ class TestSlurmSerialStepsSingularity:
         )
         assert "--nv" in script
 
-    def test_done_marker_not_inside_singularity_call(self):
-        """The .done marker should be on its own host line, not inside a container call."""
-        backend = _make_slurm_backend(singularity=_make_singularity())
-        task = _make_task(log_dir="/logs/exp1")
-        script = backend.generate_script(
-            task, script=SCRIPT,
-            hydra_enabled=True,
-            serial_steps=SERIAL_STEPS,
-        )
-        done_line = next(
-            (l for l in script.splitlines() if ".done" in l), None
-        )
-        assert done_line is not None
-        assert "singularity exec" not in done_line
-
 
 # ---------------------------------------------------------------------------
 # d. SSH serial_steps with singularity — each step wrapped independently
@@ -362,20 +326,6 @@ class TestSSHSerialStepsSingularity:
             serial_steps=SERIAL_STEPS,
         )
         assert "--nv" in script
-
-    def test_done_marker_not_inside_singularity_call(self):
-        backend = _make_ssh_backend(singularity=_make_singularity())
-        task = _make_task(log_dir="/logs/exp1")
-        script = backend.generate_script(
-            task, script=SCRIPT,
-            hydra_enabled=True,
-            serial_steps=SERIAL_STEPS,
-        )
-        done_line = next(
-            (l for l in script.splitlines() if ".done" in l), None
-        )
-        assert done_line is not None
-        assert "singularity exec" not in done_line
 
 
 # ---------------------------------------------------------------------------
@@ -447,88 +397,3 @@ class TestNoSerialStepsSingleCommand:
         )
         assert script.count("singularity exec") == 1
 
-
-# ---------------------------------------------------------------------------
-# f. Script structure: .done marker is the last substantive line
-# ---------------------------------------------------------------------------
-
-class TestDoneMarkerIsLast:
-    def test_slurm_done_is_last_non_empty_line(self):
-        backend = _make_slurm_backend()
-        task = _make_task(log_dir="/logs/exp1")
-        script = backend.generate_script(
-            task, script=SCRIPT,
-            hydra_enabled=True,
-            serial_steps=SERIAL_STEPS,
-        )
-        non_empty_lines = [l for l in script.rstrip("\n").splitlines() if l.strip()]
-        assert non_empty_lines[-1] == "touch /logs/exp1/.done"
-
-    def test_ssh_done_is_last_non_empty_line(self):
-        backend = _make_ssh_backend()
-        task = _make_task(log_dir="/logs/exp1")
-        script = backend.generate_script(
-            task, script=SCRIPT,
-            hydra_enabled=True,
-            serial_steps=SERIAL_STEPS,
-        )
-        non_empty_lines = [l for l in script.rstrip("\n").splitlines() if l.strip()]
-        assert non_empty_lines[-1] == "touch /logs/exp1/.done"
-
-    def test_slurm_python_commands_before_done(self):
-        """Both python commands must appear before the .done marker."""
-        backend = _make_slurm_backend()
-        task = _make_task(log_dir="/logs/exp1")
-        script = backend.generate_script(
-            task, script=SCRIPT,
-            hydra_enabled=True,
-            serial_steps=SERIAL_STEPS,
-        )
-        done_pos = script.index("touch /logs/exp1/.done")
-        training_pos = script.index("task=training")
-        evaluate_pos = script.index("task=evaluate")
-        assert training_pos < done_pos
-        assert evaluate_pos < done_pos
-
-    def test_ssh_python_commands_before_done(self):
-        backend = _make_ssh_backend()
-        task = _make_task(log_dir="/logs/exp1")
-        script = backend.generate_script(
-            task, script=SCRIPT,
-            hydra_enabled=True,
-            serial_steps=SERIAL_STEPS,
-        )
-        done_pos = script.index("touch /logs/exp1/.done")
-        training_pos = script.index("task=training")
-        evaluate_pos = script.index("task=evaluate")
-        assert training_pos < done_pos
-        assert evaluate_pos < done_pos
-
-    def test_slurm_singularity_done_after_both_container_calls(self):
-        """With singularity, both container invocations appear before .done."""
-        backend = _make_slurm_backend(singularity=_make_singularity())
-        task = _make_task(log_dir="/logs/exp1")
-        script = backend.generate_script(
-            task, script=SCRIPT,
-            hydra_enabled=True,
-            serial_steps=SERIAL_STEPS,
-        )
-        done_pos = script.index("touch /logs/exp1/.done")
-        first_sing_pos = script.index("singularity exec")
-        second_sing_pos = script.index("singularity exec", first_sing_pos + 1)
-        assert first_sing_pos < done_pos
-        assert second_sing_pos < done_pos
-
-    def test_ssh_singularity_done_after_both_container_calls(self):
-        backend = _make_ssh_backend(singularity=_make_singularity())
-        task = _make_task(log_dir="/logs/exp1")
-        script = backend.generate_script(
-            task, script=SCRIPT,
-            hydra_enabled=True,
-            serial_steps=SERIAL_STEPS,
-        )
-        done_pos = script.index("touch /logs/exp1/.done")
-        first_sing_pos = script.index("singularity exec")
-        second_sing_pos = script.index("singularity exec", first_sing_pos + 1)
-        assert first_sing_pos < done_pos
-        assert second_sing_pos < done_pos

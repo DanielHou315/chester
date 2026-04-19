@@ -60,12 +60,6 @@ def test_slurm_script_loads_modules():
     assert "module load cuda/12.1.1" in script
 
 
-def test_slurm_script_creates_done_marker():
-    backend = _make_backend()
-    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
-    script = backend.generate_script(task, script="train.py")
-    assert "touch /remote/logs/exp1/.done" in script
-
 
 def test_slurm_script_with_singularity():
     sing = SingularityConfig(

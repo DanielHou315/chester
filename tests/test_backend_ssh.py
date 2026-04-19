@@ -40,12 +40,6 @@ def test_ssh_script_cds_to_remote_dir():
     assert "cd /home/user/myproject" in script
 
 
-def test_ssh_script_creates_done_marker():
-    backend = _make_backend()
-    task = {"params": {"lr": 0.01, "log_dir": "/remote/logs/exp1"}}
-    script = backend.generate_script(task, script="train.py")
-    assert "touch /remote/logs/exp1/.done" in script
-
 
 def test_ssh_script_with_singularity():
     sing = SingularityConfig(

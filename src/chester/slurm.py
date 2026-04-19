@@ -280,11 +280,6 @@ def to_slurm_command(params, header, python_command="srun python", remote_dir='~
         command = to_local_command(params, wrapped_python, script, env)
     sing_commands.append(command)
 
-    # Add .done marker file on successful completion (for auto_pull to detect)
-    assert 'log_dir' in params, "chester auto_pull: log_dir must be in params"
-    log_dir = params['log_dir']
-    sing_commands.append(f'touch {log_dir}/.done')
-
     all_sing_cmds = ' && '.join(sing_commands)
     command_list.append(sing_prefix + ' \'{}\''.format(all_sing_cmds))
     if post_commands is not None:
@@ -350,11 +345,6 @@ def to_ssh_command(params, python_command="python", remote_dir='./',
     else:
         command = to_local_command(params, wrapped_python, script, env if env else {})
     command_list.append(command)
-
-    # Add .done marker file on successful completion (for auto_pull to detect)
-    assert 'log_dir' in params, "chester auto_pull: log_dir must be in params"
-    log_dir = params['log_dir']
-    command_list.append(f'touch {log_dir}/.done')
 
     return command_list
 

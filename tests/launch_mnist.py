@@ -173,8 +173,6 @@ def main():
             log_dir=log_dir,
             use_gpu=(args.mode != 'local'),
             dry=args.dry,
-            auto_pull=(args.mode != 'local'),
-            auto_pull_interval=30,
         )
 
     if args.dry:

@@ -371,7 +371,6 @@ backends:
                     confirm=True,
                     dry=False,
                     git_snapshot=False,
-                    auto_pull=False,
                 )
 
             # First job (training) should have no dependencies

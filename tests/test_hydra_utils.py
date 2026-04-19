@@ -377,7 +377,6 @@ class TestGenerateScriptHydra:
         assert "lr=0.01" in script
         assert "batch_size=32" in script
         assert "--lr" not in script
-        assert "touch" in script  # .done marker still present
 
     def test_slurm_generate_script_hydra(self):
         from chester.backends import create_backend, BackendConfig, SlurmConfig
@@ -395,7 +394,6 @@ class TestGenerateScriptHydra:
         assert "batch_size=32" in script
         assert "--lr" not in script
         assert "#SBATCH" in script  # SLURM header still present
-        assert "touch" in script    # .done marker still present
 
     def test_slurm_generate_script_cli_mode(self):
         """Verify non-hydra mode still works (--key value for raw params)."""
