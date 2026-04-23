@@ -275,13 +275,16 @@ class SSHBackend(Backend):
     # Batch flush
     # ------------------------------------------------------------------
 
-    def flush_batch(self) -> None:
+    def flush_batch(self, wait: bool = False) -> None:
         """Upload all pending scripts and dispatch a single GPU-worker meta-job.
 
         GPU IDs are resolved via :meth:`_resolve_gpu_ids` (config string →
         remote env → nvidia-smi → range(batch_gpu) fallback).  One worker
         process is spawned per GPU; workers atomically pop scripts from a
         shared queue file using ``flock``.
+
+        Args:
+            wait: If True, block until the meta-job process exits on the remote host.
         """
         if not self._pending:
             return
@@ -359,6 +362,19 @@ class SSHBackend(Backend):
             f"[chester] Tail batch log: ssh {host} tail -f {q_log}"
         )
         self._pending.clear()
+
+        if wait:
+            import time
+            print(f"[chester] Waiting for batch job (PID={pid}) on {host} ...")
+            while True:
+                r = subprocess.run(
+                    ["ssh", host, f"kill -0 {pid} 2>/dev/null"],
+                    capture_output=True,
+                )
+                if r.returncode != 0:
+                    break
+                time.sleep(10)
+            print(f"[chester] Batch job (PID={pid}) on {host} finished.")
 
     # ------------------------------------------------------------------
     # Batch script templates

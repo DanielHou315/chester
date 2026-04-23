@@ -747,8 +747,18 @@ def rsync_extra_dirs(remote_host, remote_dir, project_path, extra_sync_dirs):
             remote_path = os.path.join(remote_dir, dir_path)
 
         print(f'[chester] rsync extra dir: {local_path} -> {remote_host}:{remote_path}')
+        # Pre-create the destination directory on the remote so we don't depend
+        # on rsync's --mkpath (unavailable in rsync < 3.2.3, e.g. gl's 3.1.3).
+        mkdir_result = subprocess.run(
+            ["ssh", remote_host, f"mkdir -p {shlex.quote(remote_path)}"]
+        )
+        if mkdir_result.returncode != 0:
+            raise RuntimeError(
+                f"[chester] ssh mkdir -p failed (exit {mkdir_result.returncode}): "
+                f"{remote_host}:{remote_path}"
+            )
         cmd = [
-            "rsync", "-avzhK", "--info=progress2", "--mkpath",
+            "rsync", "-avzhK", "--info=progress2",
             "--skip-compress=sif/img/iso/gz/bz2/xz/zst/zip/7z",
             local_path.rstrip("/") + "/",
             f"{remote_host}:{remote_path}",
@@ -1044,16 +1054,19 @@ def detect_local_gpus() -> list:
     return ["0"]
 
 
-def flush_backend(mode: str) -> None:
+def flush_backend(mode: str, wait: bool = False) -> None:
     """Flush accumulated scripts for a batch SSH backend and fire the meta-job.
 
     No-op if the backend is not in batch mode or has no pending scripts.
     Should be called after the variant loop in the launcher.
+
+    Args:
+        wait: If True, block until the remote batch job finishes.
     """
     backend = _ssh_batch_backends.get(mode)
     if backend is None:
         return
-    backend.flush_batch()
+    backend.flush_batch(wait=wait)
     del _ssh_batch_backends[mode]
 
 
