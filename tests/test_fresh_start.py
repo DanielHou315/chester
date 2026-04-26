@@ -151,13 +151,13 @@ def _make_batch_tasks(tmp_path, exp_prefix="myexp", n=3):
     return tasks
 
 
-def test_fresh_start_v2_no_dirs_prints_message(tmp_path, capsys):
-    from chester.run_exp import _fresh_start_v2
+def test_fresh_start_no_dirs_prints_message(tmp_path, capsys):
+    from chester.run_exp import _fresh_start
 
     batch_dir = tmp_path / "data" / "train" / "myexp"
     # batch_dir doesn't exist → no existing dirs
 
-    _fresh_start_v2(
+    _fresh_start(
         exp_prefix="myexp",
         sub_dir="train",
         cfg_log_dir=str(tmp_path / "data"),
@@ -171,8 +171,8 @@ def test_fresh_start_v2_no_dirs_prints_message(tmp_path, capsys):
     assert "no existing directories found" in captured.out.lower()
 
 
-def test_fresh_start_v2_aborts_on_non_yes(tmp_path, capsys):
-    from chester.run_exp import _fresh_start_v2
+def test_fresh_start_aborts_on_non_yes(tmp_path, capsys):
+    from chester.run_exp import _fresh_start
 
     # Create an existing variant dir
     var_dir = tmp_path / "data" / "train" / "myexp" / "1_myexp_lr_0.001"
@@ -181,7 +181,7 @@ def test_fresh_start_v2_aborts_on_non_yes(tmp_path, capsys):
 
     with patch("builtins.input", return_value="no"):
         with pytest.raises(SystemExit) as exc_info:
-            _fresh_start_v2(
+            _fresh_start(
                 exp_prefix="myexp",
                 sub_dir="train",
                 cfg_log_dir=str(tmp_path / "data"),
@@ -195,15 +195,15 @@ def test_fresh_start_v2_aborts_on_non_yes(tmp_path, capsys):
     assert var_dir.exists()
 
 
-def test_fresh_start_v2_deletes_local_on_yes(tmp_path):
-    from chester.run_exp import _fresh_start_v2
+def test_fresh_start_deletes_local_on_yes(tmp_path):
+    from chester.run_exp import _fresh_start
 
     var_dir = tmp_path / "data" / "train" / "myexp" / "1_myexp_lr_0.001"
     var_dir.mkdir(parents=True)
     (var_dir / "model.pt").write_bytes(b"x" * 100)
 
     with patch("builtins.input", return_value="yes"):
-        _fresh_start_v2(
+        _fresh_start(
             exp_prefix="myexp",
             sub_dir="train",
             cfg_log_dir=str(tmp_path / "data"),
@@ -216,8 +216,8 @@ def test_fresh_start_v2_deletes_local_on_yes(tmp_path):
     assert not var_dir.exists()
 
 
-def test_fresh_start_v2_shows_table_with_pt_count(tmp_path, capsys):
-    from chester.run_exp import _fresh_start_v2
+def test_fresh_start_shows_table_with_pt_count(tmp_path, capsys):
+    from chester.run_exp import _fresh_start
 
     var_dir = tmp_path / "data" / "train" / "myexp" / "1_myexp_lr_0.001"
     var_dir.mkdir(parents=True)
@@ -225,7 +225,7 @@ def test_fresh_start_v2_shows_table_with_pt_count(tmp_path, capsys):
     (var_dir / "final.pth").write_bytes(b"x" * 2048)
 
     with patch("builtins.input", return_value="yes"):
-        _fresh_start_v2(
+        _fresh_start(
             exp_prefix="myexp",
             sub_dir="train",
             cfg_log_dir=str(tmp_path / "data"),
@@ -240,8 +240,8 @@ def test_fresh_start_v2_shows_table_with_pt_count(tmp_path, capsys):
     assert "2 pt" in captured.out
 
 
-def test_fresh_start_v2_remote_scans_and_deletes(tmp_path, capsys):
-    from chester.run_exp import _fresh_start_v2
+def test_fresh_start_remote_scans_and_deletes(tmp_path, capsys):
+    from chester.run_exp import _fresh_start
     from chester.backends.base import BackendConfig
 
     # Create local variant dir
@@ -262,7 +262,7 @@ def test_fresh_start_v2_remote_scans_and_deletes(tmp_path, capsys):
     with patch("chester.run_exp._scan_remote_batch_dir", return_value=fake_remote_rows), \
          patch("chester.run_exp.subprocess.run") as mock_subproc, \
          patch("builtins.input", return_value="yes"):
-        _fresh_start_v2(
+        _fresh_start(
             exp_prefix="myexp",
             sub_dir="train",
             cfg_log_dir=str(tmp_path / "data"),

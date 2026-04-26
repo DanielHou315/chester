@@ -1,9 +1,8 @@
 #!/usr/bin/env python
-"""Chester v2 demo — trains a real neural network, saves a checkpoint.
+"""Chester demo — trains a real neural network, saves a checkpoint.
 
-    cd /home/houhd/code/chester-overhaul/tests
-    uv run python ../demo_v2.py                  # local only
-    uv run python ../demo_v2.py --ssh armdual    # local + real SSH
+    uv run python examples/chester/demo.py                  # local only
+    uv run python examples/chester/demo.py --ssh armdual    # local + real SSH
 """
 import argparse
 import json
@@ -194,7 +193,7 @@ def demo_ssh(demo_dir, host):
     """Train on a remote SSH host, pull checkpoint back, verify."""
     from chester.backends import create_backend
     from chester.backends.base import parse_backend_config
-    from chester.config_v2 import load_config
+    from chester.config import load_config
 
     print("\n" + "=" * 60)
     print(f" SSH ({host}): train remotely, pull checkpoint back")
@@ -331,7 +330,7 @@ print(f'  loss={{loss.item():.4f}} acc={{acc:.2%}} device={{device}}')
 def demo_slurm_script():
     """Show what a SLURM training script looks like, with overrides."""
     from chester.backends import create_backend
-    from chester.config_v2 import get_backend, load_config
+    from chester.config import get_backend, load_config
 
     print("\n" + "=" * 60)
     print(" SLURM (gl): generated training script")

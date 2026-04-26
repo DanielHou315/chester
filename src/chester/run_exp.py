@@ -17,71 +17,12 @@ import dateutil.tz
 import json
 import shlex
 import secrets as _secrets
-from . import config
-from chester.config_v2 import load_config, get_backend
+from chester.config import load_config, get_backend
 from chester.backends import create_backend
 
 
-# Deprecated modes that are no longer supported
-_DEPRECATED_MODES = frozenset({
-    "ec2", "autobot", "singularity", "local_singularity",
-})
-
-
-def _map_local_to_remote_log_dir(local_log_dir: str, mode: str) -> str:
-    """
-    Map a local log directory to its remote equivalent.
-
-    The user specifies a local log_dir, and chester automatically maps it to
-    the equivalent path on remote based on project roots.
-
-    Example:
-        Local PROJECT_PATH: /home/user/project
-        Local log_dir: /home/user/project/data/train/exp1
-        Remote remote_dir: /home/remote/project
-        -> Remote log_dir: /home/remote/project/data/train/exp1
-
-    Args:
-        local_log_dir: Local log directory (absolute or relative to PROJECT_PATH)
-        mode: Execution mode (e.g., 'armfranka', 'gl')
-
-    Returns:
-        Remote log directory path
-
-    Raises:
-        ValueError: If local_log_dir is not within PROJECT_PATH
-    """
-    project_path = config.PROJECT_PATH
-    remote_dir = config.REMOTE_DIR.get(mode)
-
-    if not remote_dir:
-        raise ValueError(f"No remote_dir configured for mode '{mode}'")
-
-    # Resolve local_log_dir to absolute path
-    if not os.path.isabs(local_log_dir):
-        local_log_dir = os.path.join(project_path, local_log_dir)
-    local_log_dir = os.path.normpath(local_log_dir)
-
-    # Ensure local_log_dir is within PROJECT_PATH
-    project_path_normalized = os.path.normpath(project_path)
-    if not local_log_dir.startswith(project_path_normalized + os.sep) and local_log_dir != project_path_normalized:
-        raise ValueError(
-            f"log_dir must be within PROJECT_PATH for remote sync.\n"
-            f"  log_dir: {local_log_dir}\n"
-            f"  PROJECT_PATH: {project_path_normalized}\n"
-            f"Log directory must be a subdirectory of the project root."
-        )
-
-    # Compute relative path from PROJECT_PATH
-    relative_path = os.path.relpath(local_log_dir, project_path_normalized)
-
-    # Map to remote
-    remote_log_dir = os.path.join(remote_dir, relative_path)
-    return remote_log_dir
-
-
-def _map_local_to_remote_log_dir_v2(local_log_dir, project_path, remote_dir):
-    """Map local log_dir to remote using the new config system.
+def _map_local_to_remote_log_dir(local_log_dir, project_path, remote_dir):
+    """Map local log_dir to remote.
 
     Args:
         local_log_dir: Local log directory (absolute path, already resolved)
@@ -275,15 +216,6 @@ def confirm_action(message: str, default: str = "yes", skip: bool = False) -> bo
         else:
             sys.stdout.write("Please respond with 'yes' or 'no' "
                              "(or 'y' or 'n').\n")
-
-
-def query_yes_no(question, default="yes"):
-    """Deprecated: use confirm_action() instead."""
-    import warnings
-    warnings.warn("query_yes_no() is deprecated, use confirm_action()", DeprecationWarning, stacklevel=2)
-    return confirm_action(question, default=default)
-
-
 
 
 
@@ -665,31 +597,8 @@ def variant(*args, **kwargs):
     return _variant
 
 
-def rsync_code(remote_host, remote_dir):
-    """
-    Sync project code to remote host.
-
-    Syncs from PROJECT_PATH to remote_dir.
-    Requires rsync_include and rsync_exclude lists in chester.yaml.
-    """
-    project_path = config.PROJECT_PATH
-    print(f'Ready to rsync code: {project_path} -> {remote_host}:{remote_dir}')
-
-    yaml_include = config.RSYNC_INCLUDE
-    yaml_exclude = config.RSYNC_EXCLUDE
-
-    if not yaml_include and not yaml_exclude:
-        raise ValueError("rsync_include and rsync_exclude must be defined in chester.yaml")
-
-    include_args = ' '.join(f"--include='{p}'" for p in yaml_include)
-    exclude_args = ' '.join(f"--exclude='{p}'" for p in yaml_exclude)
-    cmd = f"rsync -avzhK --info=progress2 --delete {include_args} {exclude_args} {project_path}/ {remote_host}:{remote_dir}"
-    print(cmd)
-    os.system(cmd)
-
-
-def rsync_code_v2(remote_host, remote_dir, project_path, rsync_include, rsync_exclude):
-    """Sync project code to remote host using the new config system.
+def rsync_code(remote_host, remote_dir, project_path, rsync_include, rsync_exclude):
+    """Sync project code to remote host.
 
     Args:
         remote_host: SSH host identifier
@@ -870,7 +779,7 @@ def _scan_remote_batch_dir(host: str, remote_batch_dir: str) -> list | None:
         return None
 
 
-def _fresh_start_v2(
+def _fresh_start(
     exp_prefix: str,
     sub_dir: str,
     cfg_log_dir: str,
@@ -893,7 +802,7 @@ def _fresh_start_v2(
     remote_rows = []
     remote_scan_failed = False
     if is_remote:
-        remote_batch_dir = _map_local_to_remote_log_dir_v2(
+        remote_batch_dir = _map_local_to_remote_log_dir(
             local_batch_dir, project_path, backend_config.remote_dir
         )
         result = _scan_remote_batch_dir(backend_config.host, remote_batch_dir)
@@ -1178,17 +1087,7 @@ def run_experiment_lite(
         variations = []
 
     # ----------------------------------------------------------------
-    # 1. Reject deprecated modes
-    # ----------------------------------------------------------------
-    if mode in _DEPRECATED_MODES:
-        raise ValueError(
-            f"Mode '{mode}' is deprecated. Use backend names from "
-            f".chester/config.yaml instead. "
-            f"For singularity, configure it on the backend."
-        )
-
-    # ----------------------------------------------------------------
-    # 2. Load config and create backend
+    # 1. Load config and create backend
     # ----------------------------------------------------------------
     cfg = load_config()
     backend_config = get_backend(mode, cfg)
@@ -1279,7 +1178,7 @@ def run_experiment_lite(
     # 4.5. Fresh start — delete existing dirs before ID generation
     # ----------------------------------------------------------------
     if fresh and first_variant:
-        _fresh_start_v2(
+        _fresh_start(
             exp_prefix=exp_prefix,
             sub_dir=sub_dir,
             cfg_log_dir=cfg_log_dir,
@@ -1356,7 +1255,7 @@ def run_experiment_lite(
 
         # For remote backends, map local to remote; for local, use as-is
         if is_remote:
-            task['log_dir'] = _map_local_to_remote_log_dir_v2(
+            task['log_dir'] = _map_local_to_remote_log_dir(
                 local_log_dir, project_path, backend_config.remote_dir
             )
         else:
@@ -1399,7 +1298,7 @@ def run_experiment_lite(
     # ----------------------------------------------------------------
     if is_remote and first_variant and not dry:
         rsync_exclude = list(cfg.get("rsync_exclude", []))
-        rsync_code_v2(
+        rsync_code(
             remote_host=backend_config.host,
             remote_dir=backend_config.remote_dir,
             project_path=project_path,

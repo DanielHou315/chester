@@ -1,4 +1,4 @@
-"""Integration tests for the new v2 backend system.
+"""Integration tests for the backend system.
 
 These tests exercise the full pipeline: config loading -> backend creation ->
 script generation, verifying that all layers work together correctly.
@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from chester.config_v2 import load_config, get_backend
+from chester.config import load_config, get_backend
 from chester.backends import create_backend
 
 

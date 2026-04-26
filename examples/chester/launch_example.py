@@ -1,8 +1,8 @@
 """
-Example launcher script using Chester v2 backend system.
+Example launcher script.
 
-This script demonstrates how to launch experiments with the new
-.chester/config.yaml configuration format.
+Demonstrates how to launch experiments with the .chester/config.yaml
+configuration format.
 
 Usage:
     uv run python launch_example.py

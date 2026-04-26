@@ -177,7 +177,7 @@ def to_hydra_command(
     return command
 
 def run_hydra_command(command: str, log_dir: str, stub_method_call: Callable):
-    from .config_v2 import load_config
+    from .config import load_config
     hydra, HydraConfig, read_write, open_dict = _require_hydra()
 
     cmd_parts = shlex.split(command)
@@ -190,7 +190,7 @@ def run_hydra_command(command: str, log_dir: str, stub_method_call: Callable):
 
     # Everything after the python module are hydra overrides
     overrides = cmd_parts[module_start_idx:]
-    # Use hydra_config_path from config (resolved to absolute path by config_v2)
+    # Use hydra_config_path from config (resolved to absolute path by load_config)
     cfg = load_config()
     config_dir = cfg["hydra_config_path"]
     with hydra.initialize_config_dir(config_dir=config_dir, version_base=None):

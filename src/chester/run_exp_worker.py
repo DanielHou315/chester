@@ -9,11 +9,8 @@ import pickle as pickle
 import base64
 import joblib
 
-from . import config
-
 
 def run_experiment(argv):
-    default_log_dir = config.LOG_DIR
     now = datetime.datetime.now(dateutil.tz.tzlocal())
 
     # avoid name clashes when running distributed jobs
@@ -61,7 +58,8 @@ def run_experiment(argv):
     args = parser.parse_args(argv[1:])
 
     if args.log_dir is None:
-        log_dir = osp.join(default_log_dir, args.exp_name)
+        from chester.config import load_config
+        log_dir = osp.join(load_config()['log_dir'], args.exp_name)
     else:
         log_dir = args.log_dir
 

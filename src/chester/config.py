@@ -1,283 +1,196 @@
 """
-Chester Configuration Module
-
-This module provides configuration for chester via YAML files.
-Configuration is loaded from chester.yaml in the parent project directory.
-
-Search order for chester.yaml:
-1. CHESTER_CONFIG_PATH environment variable
-2. Parent directories from current working directory (up to git root)
-3. Fall back to defaults for local-only usage
+Chester configuration — loads .chester/config.yaml.
 
 Usage:
-    from chester import config
-    print(config.PROJECT_PATH)
-    print(config.REMOTE_DIR['gl'])
+    from chester.config import load_config, get_backend
+
+    cfg = load_config()
+    backend = get_backend("greatlakes", cfg)
 """
 
 import os
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-# Lazy-loaded configuration
-_config: Optional[Dict[str, Any]] = None
-_config_path: Optional[Path] = None
+import yaml
+
+from chester.backends.base import BackendConfig, parse_backend_config
 
 
-def _find_config_file() -> Optional[Path]:
+VALID_PACKAGE_MANAGERS = ("python", "conda", "uv")
+
+
+def _find_config_file(search_from: Optional[Path] = None) -> Optional[Path]:
     """
-    Search for chester.yaml configuration file.
+    Search for chester configuration file.
 
     Search order:
     1. CHESTER_CONFIG_PATH environment variable
-    2. Parent directories from cwd (stops at git root or filesystem root)
+    2. .chester/config.yaml in search_from or parent directories
 
     Returns:
-        Path to chester.yaml if found, None otherwise
+        Path to config file if found, None otherwise.
     """
-    # Check environment variable first
-    env_path = os.environ.get('CHESTER_CONFIG_PATH')
+    env_path = os.environ.get("CHESTER_CONFIG_PATH")
     if env_path:
         path = Path(env_path)
         if path.exists():
             return path
-        warnings.warn(f"CHESTER_CONFIG_PATH set to {env_path} but file not found")
+        warnings.warn(
+            f"CHESTER_CONFIG_PATH set to {env_path} but file not found",
+            stacklevel=2,
+        )
 
-    # Search parent directories from cwd
-    current = Path.cwd().resolve()
-    while current != current.parent:
-        config_path = current / 'chester.yaml'
-        if config_path.exists():
-            return config_path
+    start = Path(search_from).resolve() if search_from else Path.cwd().resolve()
+
+    current = start
+    while True:
+        new_config = current / ".chester" / "config.yaml"
+        if new_config.exists():
+            return new_config
+
         # Stop at git root to avoid searching too far
-        if (current / '.git').exists():
+        if (current / ".git").exists():
             break
-        current = current.parent
+
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
 
     return None
 
 
-def _get_defaults() -> Dict[str, Any]:
+def _resolve_project_path(config: Dict[str, Any], config_file: Path) -> str:
     """
-    Get default configuration for local-only usage.
-
-    These defaults allow chester to work without a config file
-    for basic local execution.
+    Resolve project_path from config or auto-detect from .chester/ parent.
     """
-    cwd = os.getcwd()
-    return {
-        'project_path': cwd,
-        'log_dir': os.path.join(cwd, 'data'),
-        'host_address': {'local': ''},
-        'ssh_hosts': [],
-        'remote_dir': {'local': cwd},
-        'remote_log_dir': {'local': os.path.join(cwd, 'data')},
-        'remote_header': {},
-        'simg_path': {},
-        'cuda_module': {},
-        'modules': {},
-        'remote_mount_option': {},
-        'autobot_nodelist': [],
-        'gpu_state_dir': '',
-        'chester_queue_dir': '',
-        'chester_scheduler_log_dir': '',
-        # Scheduler username (for autobot scheduler, defaults to current user)
-        'scheduler_username': os.environ.get('USER', os.environ.get('USERNAME', '')),
-        # Package manager config
-        'package_manager': 'uv',  # 'uv' or 'conda'
-        'conda_env': None,  # Required if package_manager is 'conda'
-        'conda_command': 'conda',  # 'conda' or 'mamba'
-        'sync_on_launch': True,  # Whether to run uv sync / conda env update
-        # Rsync patterns (optional, falls back to file-based approach)
-        'rsync_include': [],
-        'rsync_exclude': [],
-        # Custom commands to run after package manager setup (replaces prepare.sh)
-        'prepare_commands': [],
-        # Hydra config path (relative to project_path, or absolute)
-        'hydra_config_path': 'configs',
-    }
+    if "project_path" in config and config["project_path"]:
+        return os.path.abspath(config["project_path"])
+
+    return str(config_file.parent.parent)
 
 
-def _resolve_paths(config: Dict[str, Any], config_dir: Path) -> Dict[str, Any]:
+def _parse_backends(
+    raw_backends: Optional[Dict[str, Any]],
+) -> Dict[str, BackendConfig]:
+    """Parse backends section into BackendConfig objects."""
+    if not raw_backends:
+        return {}
+
+    backends = {}
+    for name, raw in raw_backends.items():
+        backends[name] = parse_backend_config(name, raw)
+    return backends
+
+
+def load_config(search_from: Optional[Path] = None) -> Dict[str, Any]:
     """
-    Resolve relative paths in configuration.
+    Load chester configuration.
 
-    - project_path: defaults to config file directory if not specified
-    - log_dir: resolved relative to project_path if not absolute
-    """
-    # Resolve project_path
-    if 'project_path' not in config or not config['project_path']:
-        config['project_path'] = str(config_dir)
-    else:
-        config['project_path'] = os.path.abspath(config['project_path'])
+    Searches for config files and returns a fully resolved configuration dict.
+    The 'backends' key contains BackendConfig objects (not raw dicts).
 
-    project_path = config['project_path']
-
-    # Resolve log_dir relative to project_path
-    log_dir = config.get('log_dir', 'data')
-    if not os.path.isabs(log_dir):
-        config['log_dir'] = os.path.join(project_path, log_dir)
-    else:
-        config['log_dir'] = log_dir
-
-    # Resolve hydra_config_path relative to project_path
-    hydra_config_path = config.get('hydra_config_path', 'configs')
-    if not os.path.isabs(hydra_config_path):
-        config['hydra_config_path'] = os.path.join(project_path, hydra_config_path)
-    else:
-        config['hydra_config_path'] = hydra_config_path
-
-    return config
-
-
-def _merge_with_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Merge loaded config with defaults for missing keys.
-    """
-    defaults = _get_defaults()
-    for key, default_value in defaults.items():
-        if key not in config:
-            config[key] = default_value
-        elif isinstance(default_value, dict) and isinstance(config.get(key), dict):
-            # Merge dict values (e.g., host_address)
-            merged = default_value.copy()
-            merged.update(config[key])
-            config[key] = merged
-    return config
-
-
-def _load_config() -> Dict[str, Any]:
-    """
-    Load configuration from chester.yaml with lazy initialization.
+    Args:
+        search_from: Directory to start searching from. Defaults to cwd.
 
     Returns:
-        Configuration dictionary
+        Configuration dictionary with resolved paths and parsed backends.
+
+    Raises:
+        FileNotFoundError: If no .chester/config.yaml is found.
+        ValueError: If config contains invalid values (bad backend type, etc.).
     """
-    global _config, _config_path
+    config_file = _find_config_file(search_from)
 
-    if _config is not None:
-        return _config
+    if config_file is None:
+        raise FileNotFoundError(
+            "Chester requires .chester/config.yaml in your project. "
+            "See docs/legacy/migration-v1-to-v2.md for migration from "
+            "chester 1.x (chester.yaml at project root)."
+        )
 
-    _config_path = _find_config_file()
+    with open(config_file) as f:
+        config = yaml.safe_load(f) or {}
 
-    if _config_path is not None:
-        try:
-            import yaml
-            with open(_config_path) as f:
-                _config = yaml.safe_load(f) or {}
-            _config = _resolve_paths(_config, _config_path.parent)
-            _config = _merge_with_defaults(_config)
-        except ImportError:
-            warnings.warn(
-                "PyYAML not installed. Install with: pip install pyyaml\n"
-                "Falling back to default configuration."
-            )
-            _config = _get_defaults()
-        except Exception as e:
-            warnings.warn(f"Error loading {_config_path}: {e}\nFalling back to defaults.")
-            _config = _get_defaults()
+    # Resolve project_path
+    project_path = _resolve_project_path(config, config_file)
+    config["project_path"] = project_path
+
+    # Resolve log_dir relative to project_path
+    log_dir = config.get("log_dir", "data")
+    if not os.path.isabs(log_dir):
+        config["log_dir"] = os.path.join(project_path, log_dir)
     else:
-        # No config file found - use defaults
-        _config = _get_defaults()
+        config["log_dir"] = log_dir
 
-    return _config
+    # Resolve hydra_config_path relative to project_path
+    hydra_config_path = config.get("hydra_config_path", "configs")
+    if not os.path.isabs(hydra_config_path):
+        config["hydra_config_path"] = os.path.join(project_path, hydra_config_path)
+    else:
+        config["hydra_config_path"] = hydra_config_path
+
+    # Validate package_manager
+    pkg_manager = config.get("package_manager", "python")
+    if pkg_manager not in VALID_PACKAGE_MANAGERS:
+        raise ValueError(
+            f"Invalid package_manager '{pkg_manager}'. "
+            f"Must be one of: {VALID_PACKAGE_MANAGERS}"
+        )
+    config["package_manager"] = pkg_manager
+
+    # Set defaults for optional fields
+    config.setdefault("rsync_include", [])
+    config.setdefault("rsync_exclude", [])
+
+    # Parse shared singularity defaults (if any)
+    shared_singularity = config.get("singularity")
+
+    # Parse backends section, merging shared singularity into each backend
+    raw_backends = config.get("backends")
+    if shared_singularity and raw_backends:
+        for _name, raw in raw_backends.items():
+            if "singularity" not in raw:
+                # Backend has no singularity section — inherit shared
+                raw["singularity"] = dict(shared_singularity)
+            else:
+                # Backend has its own — merge shared as defaults
+                merged = dict(shared_singularity)
+                merged.update(raw["singularity"])
+                raw["singularity"] = merged
+
+    backends = _parse_backends(raw_backends)
+
+    # Create a default local backend if none defined
+    if not backends:
+        backends["local"] = BackendConfig(name="local", type="local")
+
+    config["backends"] = backends
+
+    return config
 
 
-def get_config_path() -> Optional[Path]:
-    """Get the path to the loaded configuration file, if any."""
-    _load_config()  # Ensure config is loaded
-    return _config_path
-
-
-def reload_config() -> Dict[str, Any]:
+def get_backend(name: str, config: Dict[str, Any]) -> BackendConfig:
     """
-    Force reload of configuration.
+    Get a BackendConfig by name from a loaded config.
 
-    Useful for testing or when config file has changed.
+    Args:
+        name: Backend name (must match a key in config['backends']).
+        config: Configuration dict returned by load_config().
+
+    Returns:
+        BackendConfig for the named backend.
+
+    Raises:
+        KeyError: If no backend with the given name exists.
     """
-    global _config, _config_path
-    _config = None
-    _config_path = None
-    return _load_config()
-
-
-# Mapping from UPPER_CASE attribute names to yaml keys
-_ATTR_MAPPING = {
-    'PROJECT_PATH': 'project_path',
-    'LOG_DIR': 'log_dir',
-    'HOST_ADDRESS': 'host_address',
-    'SSH_HOSTS': 'ssh_hosts',
-    'REMOTE_DIR': 'remote_dir',
-    'REMOTE_LOG_DIR': 'remote_log_dir',
-    'REMOTE_HEADER': 'remote_header',
-    'SIMG_PATH': 'simg_path',
-    'CUDA_MODULE': 'cuda_module',
-    'MODULES': 'modules',
-    'REMOTE_MOUNT_OPTION': 'remote_mount_option',
-    'AUTOBOT_NODELIST': 'autobot_nodelist',
-    'GPU_STATE_DIR': 'gpu_state_dir',
-    'CHESTER_QUEUE_DIR': 'chester_queue_dir',
-    'CHESTER_CHEDULER_LOG_DIR': 'chester_scheduler_log_dir',  # Note: typo preserved for compatibility
-    'CHESTER_SCHEDULER_LOG_DIR': 'chester_scheduler_log_dir',  # Correct spelling
-    'SCHEDULER_USERNAME': 'scheduler_username',
-    # Package manager config
-    'PACKAGE_MANAGER': 'package_manager',
-    'CONDA_ENV': 'conda_env',
-    'CONDA_COMMAND': 'conda_command',
-    'SYNC_ON_LAUNCH': 'sync_on_launch',
-    # Rsync patterns
-    'RSYNC_INCLUDE': 'rsync_include',
-    'RSYNC_EXCLUDE': 'rsync_exclude',
-    # Custom setup commands
-    'PREPARE_COMMANDS': 'prepare_commands',
-    # Hydra config path
-    'HYDRA_CONFIG_PATH': 'hydra_config_path',
-}
-
-
-def __getattr__(name: str) -> Any:
-    """
-    Enable config.VARIABLE_NAME access pattern.
-
-    This allows backward-compatible access like:
-        config.PROJECT_PATH
-        config.REMOTE_DIR['gl']
-    """
-    if name in _ATTR_MAPPING:
-        cfg = _load_config()
-        yaml_key = _ATTR_MAPPING[name]
-        value = cfg.get(yaml_key)
-
-        # Handle empty string defaults for path configs
-        if value is None:
-            if yaml_key in ('project_path', 'log_dir', 'gpu_state_dir',
-                           'chester_queue_dir', 'chester_scheduler_log_dir'):
-                return ''
-            return {} if yaml_key.endswith('_dir') or yaml_key in (
-                'host_address', 'remote_dir', 'remote_log_dir', 'remote_header',
-                'simg_path', 'cuda_module', 'modules', 'remote_mount_option'
-            ) else []
-
-        return value
-
-    # Check if it's a module-level function
-    if name in ('get_config_path', 'reload_config', '_load_config'):
-        return globals()[name]
-
-    raise AttributeError(f"module 'chester.config' has no attribute '{name}'")
-
-
-def __dir__() -> List[str]:
-    """List available attributes for tab completion."""
-    return list(_ATTR_MAPPING.keys()) + ['get_config_path', 'reload_config']
-
-
-# For debugging: print config when run directly
-if __name__ == "__main__":
-    cfg = _load_config()
-    print(f"Config file: {_config_path}")
-    print(f"PROJECT_PATH: {cfg.get('project_path')}")
-    print(f"LOG_DIR: {cfg.get('log_dir')}")
-    print(f"HOST_ADDRESS: {cfg.get('host_address')}")
-    print(f"REMOTE_DIR: {cfg.get('remote_dir')}")
+    backends = config.get("backends", {})
+    if name not in backends:
+        available = sorted(backends.keys())
+        raise KeyError(
+            f"Backend '{name}' not found. "
+            f"Available backends: {available}"
+        )
+    return backends[name]

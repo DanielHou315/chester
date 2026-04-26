@@ -1,50 +1,5 @@
-# tests/test_run_exp_v2.py
 import os
 import pytest
-
-
-def test_run_experiment_lite_rejects_ec2_mode():
-    from chester.run_exp import run_experiment_lite
-    with pytest.raises(ValueError, match="deprecated"):
-        run_experiment_lite(
-            stub_method_call=lambda v, l, e: None,
-            variant={"chester_first_variant": True, "chester_last_variant": True},
-            mode="ec2",
-            exp_prefix="test",
-        )
-
-
-def test_run_experiment_lite_rejects_autobot_mode():
-    from chester.run_exp import run_experiment_lite
-    with pytest.raises(ValueError, match="deprecated"):
-        run_experiment_lite(
-            stub_method_call=lambda v, l, e: None,
-            variant={"chester_first_variant": True, "chester_last_variant": True},
-            mode="autobot",
-            exp_prefix="test",
-        )
-
-
-def test_run_experiment_lite_rejects_singularity_mode():
-    from chester.run_exp import run_experiment_lite
-    with pytest.raises(ValueError, match="deprecated"):
-        run_experiment_lite(
-            stub_method_call=lambda v, l, e: None,
-            variant={"chester_first_variant": True, "chester_last_variant": True},
-            mode="singularity",
-            exp_prefix="test",
-        )
-
-
-def test_run_experiment_lite_rejects_local_singularity_mode():
-    from chester.run_exp import run_experiment_lite
-    with pytest.raises(ValueError, match="deprecated"):
-        run_experiment_lite(
-            stub_method_call=lambda v, l, e: None,
-            variant={"chester_first_variant": True, "chester_last_variant": True},
-            mode="local_singularity",
-            exp_prefix="test",
-        )
 
 
 def test_variant_generator_unchanged():
@@ -123,11 +78,11 @@ def test_run_experiment_lite_has_git_snapshot_param():
     assert sig.parameters["git_snapshot"].default is True
 
 
-def test_map_local_to_remote_log_dir_v2():
+def test_map_local_to_remote_log_dir():
     """Test the new v2 log dir mapping function."""
-    from chester.run_exp import _map_local_to_remote_log_dir_v2
+    from chester.run_exp import _map_local_to_remote_log_dir
 
-    result = _map_local_to_remote_log_dir_v2(
+    result = _map_local_to_remote_log_dir(
         local_log_dir="/home/user/project/data/train/exp1",
         project_path="/home/user/project",
         remote_dir="/home/remote/project",
@@ -135,12 +90,12 @@ def test_map_local_to_remote_log_dir_v2():
     assert result == "/home/remote/project/data/train/exp1"
 
 
-def test_map_local_to_remote_log_dir_v2_rejects_outside():
+def test_map_local_to_remote_log_dir_rejects_outside():
     """Test that v2 mapping rejects paths outside project."""
-    from chester.run_exp import _map_local_to_remote_log_dir_v2
+    from chester.run_exp import _map_local_to_remote_log_dir
 
     with pytest.raises(ValueError, match="project_path"):
-        _map_local_to_remote_log_dir_v2(
+        _map_local_to_remote_log_dir(
             local_log_dir="/other/path/logs",
             project_path="/home/user/project",
             remote_dir="/home/remote/project",

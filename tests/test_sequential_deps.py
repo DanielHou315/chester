@@ -359,7 +359,7 @@ backends:
 
             from chester.backends.slurm import SlurmBackend
             monkeypatch.setattr(SlurmBackend, "submit", mock_submit)
-            monkeypatch.setattr(run_exp, "rsync_code_v2", lambda **kw: None)
+            monkeypatch.setattr(run_exp, "rsync_code", lambda **kw: None)
 
             # Launch all variants
             for v in variants:
