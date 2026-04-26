@@ -40,3 +40,5 @@ uv add chester-ml
 | [Git Snapshot](git-snapshot.md) | Git state tracking and reproducibility features |
 | [Submodule Pinning](submodule-pinning.md) | Pinning submodule commits per job with remote worktrees |
 | [Examples](examples/) | Annotated real-world configuration examples |
+
+Upgrading from chester 1.x? See [legacy/migration-v1-to-v2.md](legacy/migration-v1-to-v2.md).

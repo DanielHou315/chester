@@ -72,7 +72,6 @@ Chester looks for config in this order:
 
 1. `CHESTER_CONFIG_PATH` environment variable
 2. `.chester/config.yaml` in current or parent directories
-3. `chester.yaml` (deprecated, still works)
 
 ### Full Config Reference
 
@@ -583,7 +582,7 @@ python -m chester.run_exp_worker --learning_rate 0.001 --model_hidden_dim 128 --
 |---|---|---|
 | Parameter sweeps | `vg.add("lr", [0.001, 0.01])` | Same (chester converts to Hydra overrides) |
 | Nested params | `variant["model"]["hidden_dim"]` | `cfg.model.hidden_dim` |
-| Config files | chester.yaml only | YAML configs in `configs/` directory |
+| Config files | `.chester/config.yaml` only | YAML configs in `configs/` directory |
 | Type checking | None | Hydra's structured configs |
 | Multirun | Manual loop | `hydra_flags={"multirun": True}` |
 

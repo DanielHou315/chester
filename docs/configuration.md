@@ -8,7 +8,8 @@ Chester searches for configuration in this order:
 
 1. **`CHESTER_CONFIG_PATH` environment variable** — if set, use this explicit path
 2. **`.chester/config.yaml`** — searched upward from current working directory until `.git` root is found
-3. **`chester.yaml` at project root** — deprecated; shows a warning if used
+
+If neither is found, Chester raises `FileNotFoundError`. (Chester 1.x supported a top-level `chester.yaml`; that location was removed in 2.0 — see [docs/legacy/migration-v1-to-v2.md](legacy/migration-v1-to-v2.md).)
 
 For most projects, place `.chester/config.yaml` in the `.chester/` directory at your project root.
 
@@ -97,7 +98,7 @@ rsync_exclude:
 ### `project_path`
 **Type:** string (path)  
 **Default:** auto-detected  
-**Description:** Absolute path to the project root. Normally you do not set this — Chester auto-detects it from the location of the config file (the directory containing `.chester/` for `.chester/config.yaml`, or the directory containing `chester.yaml` for the deprecated location). You can override it explicitly if your layout is non-standard.
+**Description:** Absolute path to the project root. Normally you do not set this — Chester auto-detects it as the directory containing `.chester/`. You can override it explicitly if your layout is non-standard.
 
 ```yaml
 project_path: /home/user/myproject

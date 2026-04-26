@@ -1,5 +1,7 @@
 # Migrating from Chester v1 to v2
 
+> **Legacy document.** Chester 2.0 removed all v1 compatibility — `chester.yaml` at the project root, the `ec2`/`autobot`/`singularity` mode strings, `chester.slurm` command generators, and the EC2/S3 helpers are gone. If your project still uses any of these, follow this guide to migrate to `.chester/config.yaml` before upgrading. Pin `chester-ml<2.0` if you need to stay on v1 temporarily.
+
 This guide covers all breaking changes in Chester v2 and how to update your project.
 
 ## Overview of Changes

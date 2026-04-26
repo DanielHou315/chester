@@ -20,16 +20,14 @@ chester/
 ├── src/chester/           # Package source code
 │   ├── run_exp.py         # Main launcher (run_experiment_lite, VariantGenerator)
 │   ├── run_exp_worker.py  # Worker that deserializes and runs experiments
-│   ├── config_v2.py       # Config loader (reads .chester/config.yaml)
+│   ├── config.py          # Config loader (reads .chester/config.yaml)
 │   ├── backends/          # Backend implementations
 │   │   ├── __init__.py    # create_backend() factory
 │   │   ├── base.py        # BackendConfig, SlurmConfig, SingularityConfig dataclasses
 │   │   ├── local.py       # LocalBackend
 │   │   ├── ssh.py         # SSHBackend (including batch_gpu mode)
 │   │   └── slurm.py       # SlurmBackend
-│   ├── slurm.py           # Deprecated v1 command generators (kept for compatibility)
-│   ├── hydra_utils.py     # Hydra override formatting
-│   └── scheduler/         # GPU scheduler utilities (autobot, legacy)
+│   └── hydra_utils.py     # Hydra override formatting
 ├── tests/                 # Tests
 ├── docs/                  # Documentation
 │   ├── index.md           # Docs hub
@@ -40,6 +38,7 @@ chester/
 │   ├── hydra.md           # Hydra integration
 │   ├── git-snapshot.md    # Git snapshot feature
 │   ├── submodule-pinning.md # Submodule commit pinning
+│   ├── legacy/            # Migration guide from chester 1.x
 │   └── examples/          # Annotated config examples
 ├── examples/              # Example launchers
 └── pyproject.toml         # Package definition
@@ -79,7 +78,7 @@ All backends support Singularity via a `singularity:` block.
 1. Implementing `generate_script()` and `submit()` in a new class inheriting `Backend`
 2. Registering the type in the factory and `VALID_BACKEND_TYPES`
 
-### Config System (`config_v2.py`)
+### Config System (`config.py`)
 
 - `load_config(search_from=None)` — finds and loads `.chester/config.yaml`
 - `get_backend(name, cfg)` — returns `BackendConfig` for a named backend
